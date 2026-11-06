@@ -60,16 +60,32 @@ runs:
         phase "apt-get install"
         # The archive cache is restored as root; the cache action runs unprivileged.
         sudo chmod -R a+rX /var/cache/apt/archives 2>/dev/null || true
-        sudo timeout 900 apt-get $APT_OPTS install -y --no-install-recommends \
-          libwebkit2gtk-4.1-dev \
-          libayatana-appindicator3-dev \
-          librsvg2-dev \
-          patchelf \
-          libgtk-3-dev \
-          build-essential \
-          curl \
-          wget \
+        # One hung acquisition can still evade the per-connection timeout and
+        # burn the whole step timeout (observed 2026-11-06: exit 124 after
+        # downloading 29 of the packages, 13 silent minutes on the 30th). A
+        # retry resumes from the archive cache, so it is cheap, and converts a
+        # stall from a failed job into a slower success.
+        install_pkgs=(
+          libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+          librsvg2-dev
+          patchelf
+          libgtk-3-dev
+          build-essential
+          curl
+          wget
           file
+        )
+        install_ok=false
+        for attempt in 1 2 3; do
+          echo "install attempt $attempt at $(date -u +%H:%M:%S)"
+          if sudo timeout 900 apt-get $APT_OPTS install -y --no-install-recommends "${install_pkgs[@]}"; then
+            install_ok=true
+            break
+          fi
+          echo "::warning::apt-get install attempt $attempt failed at $(date -u +%H:%M:%S); retrying from the archive cache"
+        done
+        $install_ok || { echo "apt-get install failed after 3 attempts"; exit 1; }
 
         phase "verify"
         pkg-config --exists webkit2gtk-4.1 && echo "webkit2gtk-4.1 present"
