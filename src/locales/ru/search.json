@@ -118,16 +118,20 @@
       "last7Days": "Изменён: за последние 7 дней",
       "last30Days": "Изменён: за последние 30 дней",
       "lastYear": "Изменён: за последний год",
-      "lastWeekday": "Изменён: в прошлый {{weekday}}",
-      "daysAgo": "Изменён: {{count}} дней назад"
+      "lastWeekday": "Изменён: в {{weekday}} на прошлой неделе",
+      "daysAgo": "Изменён: {{count}} дней назад",
+      "daysAgo_one": "Изменён: {{count}} день назад",
+      "daysAgo_few": "Изменён: {{count}} дня назад",
+      "daysAgo_many": "Изменён: {{count}} дней назад",
+      "daysAgo_other": "Изменён: {{count}} дня назад"
     },
     "weekday": {
       "monday": "понедельник",
       "tuesday": "вторник",
-      "wednesday": "среда",
+      "wednesday": "среду",
       "thursday": "четверг",
-      "friday": "пятница",
-      "saturday": "суббота",
+      "friday": "пятницу",
+      "saturday": "субботу",
       "sunday": "воскресенье"
     },
     "sizeUnder": "Размер: меньше {{value}}",
@@ -141,7 +145,7 @@
       "documents": "Тип: документы",
       "folders": "Тип: папки",
       "archives": "Тип: архивы",
-      "logs": "Тип: журналы"
+      "logs": "Тип: логи"
     },
     "in": "В: {{place}}",
     "place": {

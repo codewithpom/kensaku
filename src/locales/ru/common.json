@@ -47,9 +47,9 @@
     "paused": "Индексация приостановлена",
     "rebuilding": "Перестроение индекса…",
     "indexingProgress": "Индексация {{done}} из {{total}}",
-    "indexingFiles": "Индексация {{count}} файлов",
-    "embedding": "{{count}} файлов · построение семантического индекса",
-    "filesCount": "{{count}} файлов"
+    "indexingFiles": "Индексация файлов: {{count}}",
+    "embedding": "Файлов: {{count}} · построение семантического индекса",
+    "filesCount": "Файлов: {{count}}"
   },
   "health": {
     "issue_one": "{{count}} проблема с индексом — открыть",

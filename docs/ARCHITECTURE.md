@@ -284,8 +284,8 @@ commands, which forward to the daemon or the in-process indexer.
 - **Setup** is a guided flow: folders, exclusions, preferences, optional packs,
   first scan, Done. Downloads happen there; Settings shows status and offers
   **Run setup again**.
-- **Languages**: English and Simplified Chinese, auto-detected or chosen in
-  Settings. Query grammar stays English.
+- **Languages**: English, Simplified Chinese, and Russian, auto-detected or
+  chosen in Settings. Query grammar stays English.
 - **Themes**: light and dark. The first frame resolves the OS theme before
   paint; `dark` is the fallback when both storage and `matchMedia` fail.
 
@@ -334,7 +334,7 @@ src-tauri/src/
   ocr.rs, ocr_indra/   OCR engines and packs
   config.rs, commands.rs, daemon.rs, doctor.rs, updater.rs,
   main_window.rs, maintenance.rs, preview.rs, cli.rs
-src/            React UI (App, components, locales en/zh)
+src/            React UI (App, components, locales en/zh/ru)
 cli/            kensaku-cli, kensaku-daemon, optional kensaku-quick
 ```
 
