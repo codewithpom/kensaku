@@ -1,18 +1,1 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kensaku mark">
-  <!-- Kensaku — a bold geometric K whose upper arm doubles as a magnifier handle.
-       Palette: teal tile #2F7D6D · paper glyph #FAFAF8 · ink lens #111110. No gradients, no shadows. -->
-  <!-- Tile: rounded square, radius ~22% of size -->
-  <rect width="1024" height="1024" rx="225" fill="#2F7D6D"/>
-
-  <!-- Lower leg: sheared terminal lands exactly on the stem baseline (y 802) -->
-  <line x1="376" y1="624" x2="733" y2="732" stroke="#FAFAF8" stroke-width="146"/>
-
-  <!-- Upper arm / magnifier handle: ends beneath the lens disc -->
-  <line x1="376" y1="572" x2="661" y2="377" stroke="#FAFAF8" stroke-width="146"/>
-
-  <!-- Stem -->
-  <rect x="224" y="262" width="160" height="540" fill="#FAFAF8"/>
-
-  <!-- Lens: ink glass disc at the arm's tip -->
-  <circle cx="700" cy="346" r="126" fill="#111110"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" aria-label="Kensaku mark" role="img" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#2F7D6D" rx="225"/><line x1="376" x2="733" y1="624" y2="732" stroke="#FAFAF8" stroke-width="146"/><line x1="376" x2="661" y1="572" y2="377" stroke="#FAFAF8" stroke-width="146"/><rect width="160" height="540" x="224" y="262" fill="#FAFAF8"/><circle cx="700" cy="346" r="126" fill="#111110"/></svg>

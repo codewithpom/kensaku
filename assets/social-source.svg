@@ -1,16 +1,1 @@
-<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kensaku — 検索">
-  <!-- Social preview: mark on the app's void background, minimal wordmark. -->
-  <rect width="1280" height="640" fill="#0A0A0B"/>
-
-  <!-- Mark, 300px, vertically centered -->
-  <g transform="translate(104 170) scale(0.29296875)">
-    <rect width="1024" height="1024" rx="225" fill="#2F7D6D"/>
-    <line x1="376" y1="624" x2="733" y2="732" stroke="#FAFAF8" stroke-width="146"/>
-    <line x1="376" y1="572" x2="661" y2="377" stroke="#FAFAF8" stroke-width="146"/>
-    <rect x="224" y="262" width="160" height="540" fill="#FAFAF8"/>
-    <circle cx="700" cy="346" r="126" fill="#111110"/>
-  </g>
-
-  <!-- Wordmark -->
-  <text x="500" y="366" font-family="Noto Sans CJK JP" font-weight="700" font-size="118" fill="#FAFAF8">Kensaku<tspan font-size="92" fill="#9A9A96" dx="28">検索</tspan></text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" aria-label="Kensaku — 検索" role="img" viewBox="0 0 1280 640"><rect width="1280" height="640" fill="#0A0A0B"/><g transform="translate(104 170) scale(0.29296875)"><rect width="1024" height="1024" fill="#2F7D6D" rx="225"/><line x1="376" x2="733" y1="624" y2="732" stroke="#FAFAF8" stroke-width="146"/><line x1="376" x2="661" y1="572" y2="377" stroke="#FAFAF8" stroke-width="146"/><rect width="160" height="540" x="224" y="262" fill="#FAFAF8"/><circle cx="700" cy="346" r="126" fill="#111110"/></g><text x="500" y="366" fill="#FAFAF8" font-family="Noto Sans CJK JP" font-size="118" font-weight="700">Kensaku<tspan fill="#9A9A96" dx="28" font-size="92">検索</tspan></text></svg>
