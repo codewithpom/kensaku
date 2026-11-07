@@ -117,7 +117,10 @@ pub enum DocumentFormat {
     Ods,
     Odp,
     Rtf,
-    Email,
+    /// RFC 822 / MIME email.
+    Eml,
+    /// Outlook OLE/MAPI email.
+    Msg,
     /// CSV and TSV: one line of text per row.
     Delimited,
     PlainText,
@@ -187,7 +190,8 @@ pub fn sniff_format(path: &Path) -> DocumentFormat {
         "ods" => DocumentFormat::Ods,
         "odp" => DocumentFormat::Odp,
         "rtf" => DocumentFormat::Rtf,
-        "eml" => DocumentFormat::Email,
+        "eml" => DocumentFormat::Eml,
+        "msg" => DocumentFormat::Msg,
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif" | "heic" | "heif" => {
             DocumentFormat::Image
         }
@@ -706,8 +710,18 @@ fn extract_document_inner(
                 format_name: "Rich Text".to_string(),
             })
         }
-        DocumentFormat::Email => {
-            let text = email::extract_email(path, capped_bytes)?;
+        DocumentFormat::Eml => {
+            let text = email::extract_eml(path, capped_bytes)?;
+            Some(DocumentExtract {
+                text,
+                page_count: None,
+                is_encrypted: false,
+                is_scanned: false,
+                format_name: "Email".to_string(),
+            })
+        }
+        DocumentFormat::Msg => {
+            let text = email::extract_msg(path, capped_bytes)?;
             Some(DocumentExtract {
                 text,
                 page_count: None,

@@ -1014,7 +1014,7 @@ pub fn extract_text(path: &Path) -> Option<String> {
         .unwrap_or_default();
 
     const DOCUMENT_EXTENSIONS: &[&str] = &[
-        "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "epub", "odt", "ods", "odp", "rtf", "eml",
+        "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "epub", "odt", "ods", "odp", "rtf", "eml", "msg",
     ];
 
     if DOCUMENT_EXTENSIONS.contains(&extension.as_str()) {

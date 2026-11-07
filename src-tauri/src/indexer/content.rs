@@ -1423,6 +1423,7 @@ pub fn is_indexable_extension(ext_opt: Option<&str>) -> bool {
         "odp",
         "rtf",
         "eml",
+        "msg",
         "pages",
         "key",
         "numbers",
