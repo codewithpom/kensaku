@@ -1,4 +1,5 @@
 pub mod delimited;
+pub mod email;
 pub mod external;
 pub mod image;
 pub mod office;
@@ -116,6 +117,7 @@ pub enum DocumentFormat {
     Ods,
     Odp,
     Rtf,
+    Email,
     /// CSV and TSV: one line of text per row.
     Delimited,
     PlainText,
@@ -185,6 +187,7 @@ pub fn sniff_format(path: &Path) -> DocumentFormat {
         "ods" => DocumentFormat::Ods,
         "odp" => DocumentFormat::Odp,
         "rtf" => DocumentFormat::Rtf,
+        "eml" => DocumentFormat::Email,
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif" | "heic" | "heif" => {
             DocumentFormat::Image
         }
@@ -701,6 +704,16 @@ fn extract_document_inner(
                 is_encrypted: false,
                 is_scanned: false,
                 format_name: "Rich Text".to_string(),
+            })
+        }
+        DocumentFormat::Email => {
+            let text = email::extract_email(path, capped_bytes)?;
+            Some(DocumentExtract {
+                text,
+                page_count: None,
+                is_encrypted: false,
+                is_scanned: false,
+                format_name: "Email".to_string(),
             })
         }
         DocumentFormat::Image => {

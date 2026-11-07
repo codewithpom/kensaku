@@ -15,7 +15,7 @@ const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "i
 const DOC_EXT = new Set([
   "pdf", "md", "txt", "doc", "docx", "ppt", "pptx", "odp", "key", /* docs+slides */
   "xls", "xlsx", "csv", "tsv", "ods", "numbers" /* sheets */,
-  "rtf", "odt", "pages", "epub", "log",
+  "rtf", "eml", "odt", "pages", "epub", "log",
 ]);
 const CODE_EXT = new Set([
   "rs", "ts", "tsx", "js", "jsx", "py", "go", "c", "cpp", "h", "hpp", "java",
