@@ -93,18 +93,32 @@ function search(query: string) {
 
 const indexStatus = { is_indexing: false, files_indexed: 48213, content_indexed: 31877, current_status: "Up to date", semantic_ready: true, phase: "idle" };
 
+let mockRecentQueries = ["quarterly report", "tax 2025", "notes"];
+
 const handlers: Record<string, (a: any) => unknown> = {
   is_setup_complete: () => config.is_setup_complete,
   is_setup_configured: () => false,
   get_reset_pending: () => false,
   last_query: () => params.get("q") ?? "",
   remember_query: () => null,
+  record_recent_query: (a) => {
+    const q = (a?.query ?? "").trim();
+    if (!q || q.startsWith("/")) return null;
+    mockRecentQueries = [q, ...mockRecentQueries.filter((item) => item.toLowerCase() !== q.toLowerCase())].slice(0, 5);
+    return null;
+  },
   get_config: () => structuredClone(config),
   save_config: (a) => Object.assign(config, a.config),
   get_home_data: () => ({
     recent: params.get("empty") ? [] : FILES.slice(0, 12).map((r) => ({ path: r.path, filename: r.filename, size: r.file_size, modified: r.modified, is_dir: r.is_dir, last_open: 0, opens: 0 })),
     pins: [], saved_searches: config.saved_searches,
+    recent_queries: mockRecentQueries,
   }),
+  get_recent_queries: () => mockRecentQueries,
+  clear_recent_queries: () => {
+    mockRecentQueries = [];
+    return null;
+  },
   get_indexing_status: () => indexStatus,
   search: (a) => search(a.query ?? ""),
   get_snippets: (a) => a.paths.map((p: string) => ({ path: p, snippet: FILES.find((r) => r.path === p)?.snippet ?? null })),

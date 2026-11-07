@@ -61,6 +61,7 @@ export interface HomeData {
   recent: HomeItem[];
   pins: HomeItem[];
   saved_searches: SavedSearch[];
+  recent_queries?: string[];
 }
 
 export interface ActiveFilter {

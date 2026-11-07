@@ -2,6 +2,8 @@
   "opened": "打开于 {{time}}",
   "saved": "已保存",
   "recent": "最近",
+  "recentSearches": "最近搜索",
+  "clearRecentSearches": "清除",
   "emptyHint": "像向朋友描述一样，找到那个文件。",
   "suggestions": {
     "resume": "最新的简历",
