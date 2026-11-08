@@ -5,18 +5,67 @@
 //! creates the window again from the same settings. The last query is kept in
 //! Rust so the search comes back where the user left it.
 
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
 pub const LABEL: &str = "main";
 
 static LAST_QUERY: Mutex<String> = Mutex::new(String::new());
+static RECENT_QUERIES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 pub fn remember_query(query: &str) {
     if let Ok(mut q) = LAST_QUERY.lock() {
         q.clear();
         q.push_str(query);
     }
+}
+
+pub fn record_recent_query(query: &str) {
+    let trimmed = query.trim();
+    if trimmed.starts_with('/') {
+        return;
+    }
+    let count = trimmed.chars().count();
+    if count == 0 {
+        return;
+    }
+    if count == 1 {
+        let ch = trimmed.chars().next().unwrap_or_default();
+        if !crate::indexer::tokenizer::is_cjk(ch) {
+            return;
+        }
+    }
+    let mut list = match RECENT_QUERIES.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let trimmed_lower = trimmed.to_lowercase();
+    // Case-insensitive deduplication and supersede exact prefix extensions
+    list.retain(|q| {
+        let q_lower = q.to_lowercase();
+        q_lower != trimmed_lower && !trimmed_lower.starts_with(&format!("{q_lower} "))
+    });
+    list.push_front(trimmed.to_string());
+    if list.len() > 5 {
+        list.pop_back();
+    }
+}
+
+pub fn recent_queries() -> Vec<String> {
+    let list = match RECENT_QUERIES.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    list.iter().cloned().collect()
+}
+
+pub fn clear_recent_queries() {
+    let mut list = match RECENT_QUERIES.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    list.clear();
 }
 
 pub fn last_query() -> String {
@@ -185,5 +234,63 @@ pub fn release_free_memory() {
     #[cfg(target_os = "linux")]
     unsafe {
         libc::malloc_trim(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_queries_records_deduplicates_and_caps_at_five() {
+        clear_recent_queries();
+        assert!(recent_queries().is_empty());
+
+        // Single Latin character and empty strings are ignored
+        record_recent_query("");
+        record_recent_query("   ");
+        record_recent_query("a");
+        record_recent_query("  b  ");
+        assert!(recent_queries().is_empty());
+
+        // Slash commands are ignored
+        record_recent_query("/settings");
+        record_recent_query("/doctor");
+        assert!(recent_queries().is_empty());
+
+        // Single CJK characters are valid and retained
+        record_recent_query("税");
+        assert_eq!(recent_queries(), vec!["税"]);
+        record_recent_query("书");
+        assert_eq!(recent_queries(), vec!["书", "税"]);
+
+        clear_recent_queries();
+
+        // Valid queries
+        record_recent_query("alpha");
+        record_recent_query("beta");
+        record_recent_query("gamma");
+        assert_eq!(recent_queries(), vec!["gamma", "beta", "alpha"]);
+
+        // Case-insensitive deduplication moves to front
+        record_recent_query("Alpha");
+        assert_eq!(recent_queries(), vec!["Alpha", "gamma", "beta"]);
+
+        // Prefix extension superseding
+        record_recent_query("Alpha project");
+        assert_eq!(recent_queries(), vec!["Alpha project", "gamma", "beta"]);
+
+        // Cap at 5
+        record_recent_query("delta");
+        record_recent_query("epsilon");
+        record_recent_query("zeta");
+        assert_eq!(
+            recent_queries(),
+            vec!["zeta", "epsilon", "delta", "Alpha project", "gamma"]
+        );
+        assert_eq!(recent_queries().len(), 5);
+
+        clear_recent_queries();
+        assert!(recent_queries().is_empty());
     }
 }

@@ -272,11 +272,26 @@ function App() {
 
   /* ---------------- home data ---------------- */
 
+  const recordQuery = useCallback((q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed || trimmed.startsWith("/")) return;
+    invoke("record_recent_query", { query: trimmed }).catch(() => {});
+  }, []);
+
   const loadHome = useCallback(async () => {
     try {
       setHome(await invoke<HomeData>("get_home_data"));
     } catch (err) {
       console.error("Home data error:", err);
+    }
+  }, []);
+
+  const handleClearRecentQueries = useCallback(async () => {
+    try {
+      await invoke("clear_recent_queries");
+      setHome((prev) => (prev ? { ...prev, recent_queries: [] } : prev));
+    } catch (err) {
+      console.error("Failed to clear recent queries:", err);
     }
   }, []);
 
@@ -324,6 +339,7 @@ function App() {
       setInterpretation([]);
       setFacets(undefined);
       setSelectedIndex(0);
+      loadHome();
       return;
     }
 
@@ -375,6 +391,9 @@ function App() {
           setInterpretation(res.interpretation ?? []);
           setFacets(res.facets);
           setSelectedIndex(0);
+          if (merged.length > 0 && query.trim()) {
+            recordQuery(query);
+          }
 
           // Snippets are fetched by the visibility observer below (or the
           // no-IntersectionObserver fallback) so off-screen rows never pay
@@ -386,7 +405,7 @@ function App() {
     }, 40);
 
     return () => clearTimeout(timer);
-  }, [query, sort, isSetupComplete]);
+  }, [query, sort, isSetupComplete, loadHome]);
 
   // Fetch snippets only for rows that are actually visible (or the first 20
   // when IntersectionObserver is unavailable). Results are patched by path
@@ -566,22 +585,24 @@ function App() {
   const hideAfterOpen = config ? config.app_mode !== "app" : false;
 
   const handleOpenFile = useCallback(async (path: string) => {
+    if (query.trim()) recordQuery(query);
     try {
       await invoke("open_file", { path });
       if (hideAfterOpen) await invoke("hide_window");
     } catch (err) {
       console.error("Open file error:", err);
     }
-  }, [hideAfterOpen]);
+  }, [hideAfterOpen, query, recordQuery]);
 
   const handleOpenFolder = useCallback(async (path: string) => {
+    if (query.trim()) recordQuery(query);
     try {
       await invoke("open_folder", { path });
       if (hideAfterOpen) await invoke("hide_window");
     } catch (err) {
       console.error("Open folder error:", err);
     }
-  }, [hideAfterOpen]);
+  }, [hideAfterOpen, query, recordQuery]);
 
   const handleRunCommand = useCallback(async (cmdStr: string) => {
     try {
@@ -891,12 +912,20 @@ function App() {
       // Tab walks the results only once the user is in the list. Taking every
       // Tab meant nothing in the interface was reachable without a mouse:
       // focus could not leave the result list for the toolbar, chips or sort.
+      // When navList is empty (empty search state), let Tab focus into pill buttons.
       if (e.key === "Tab") {
+        if (navList.length === 0) return;
         if (!inInput && !navigatingRef.current) return;
         if (inInput && e.shiftKey && !navigatingRef.current) return;
       }
 
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Tab") {
+        // When navList is empty, do not intercept Tab so focus can navigate suggestions/chips.
+        if (navList.length === 0) {
+          if (e.key === "Tab") return;
+          setSelectedIndex(0);
+          return;
+        }
         // Whether the list was already being walked matters for Tab: entering
         // from the search field lands on the first result instead of skipping
         // to the second. Capture before the flag flips below.
@@ -904,10 +933,6 @@ function App() {
         e.preventDefault();
         navigatingRef.current = true;
         setNavActive(true);
-        if (navList.length === 0) {
-          setSelectedIndex(0);
-          return;
-        }
         // Tab walks the list linearly from the search field: the first press
         // lands on the first result, later presses step forward (Shift+Tab
         // back) with wrap. Grid geometry is deliberately ignored — Tab is
@@ -1397,10 +1422,13 @@ function App() {
                   ) : (
                     <HomeView
                       data={home}
+                      recentQueries={home?.recent_queries}
+                      onClearRecentQueries={handleClearRecentQueries}
                       onOpen={(path) => handleOpenFile(path)}
                       showThumbs={showThumbs}
                       focusIndex={hasQuery || !navActive ? null : selectedIndex}
                       onSearch={(q) => {
+                        recordQuery(q);
                         setQuery(q);
                         inputRef.current?.focus();
                       }}

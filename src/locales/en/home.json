@@ -2,6 +2,8 @@
   "opened": "Opened {{time}}",
   "saved": "Saved",
   "recent": "Recent",
+  "recentSearches": "Recent searches",
+  "clearRecentSearches": "Clear",
   "emptyHint": "Ask for a file the way you'd describe it to a friend.",
   "suggestions": {
     "resume": "latest resume",

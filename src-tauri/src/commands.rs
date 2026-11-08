@@ -1113,6 +1113,8 @@ pub struct HomeData {
     pub recent: Vec<HomeItem>,
     pub pins: Vec<HomeItem>,
     pub saved_searches: Vec<crate::config::SavedSearch>,
+    #[serde(default)]
+    pub recent_queries: Vec<String>,
 }
 
 pub fn home_data_for(indexer: &crate::indexer::IndexerManager) -> Result<HomeData, String> {
@@ -1189,6 +1191,7 @@ pub fn home_data_for(indexer: &crate::indexer::IndexerManager) -> Result<HomeDat
         recent,
         pins,
         saved_searches: config.saved_searches,
+        recent_queries: crate::main_window::recent_queries(),
     })
 }
 
@@ -1352,6 +1355,21 @@ pub fn remember_query(query: String) {
 #[tauri::command]
 pub fn last_query() -> String {
     crate::main_window::last_query()
+}
+
+#[tauri::command]
+pub fn record_recent_query(query: String) {
+    crate::main_window::record_recent_query(&query);
+}
+
+#[tauri::command]
+pub fn get_recent_queries() -> Vec<String> {
+    crate::main_window::recent_queries()
+}
+
+#[tauri::command]
+pub fn clear_recent_queries() {
+    crate::main_window::clear_recent_queries();
 }
 
 /// Wipes all Kensaku state on the next launch.

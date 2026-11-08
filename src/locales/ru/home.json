@@ -2,6 +2,8 @@
   "opened": "Открыт {{time}}",
   "saved": "Сохранён",
   "recent": "Недавние",
+  "recentSearches": "Недавние запросы",
+  "clearRecentSearches": "Очистить",
   "emptyHint": "Попросите файл так, как описали бы его другу.",
   "suggestions": {
     "resume": "последнее резюме",

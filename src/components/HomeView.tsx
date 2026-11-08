@@ -66,12 +66,16 @@ function RecentTile({
 
 export function HomeView({
   data,
+  recentQueries: propRecentQueries,
+  onClearRecentQueries,
   onSearch,
   onOpen,
   showThumbs,
   focusIndex,
 }: {
   data: HomeData | null;
+  recentQueries?: string[];
+  onClearRecentQueries?: () => void;
   onSearch: (query: string) => void;
   onOpen: (path: string) => void;
   showThumbs?: boolean;
@@ -82,6 +86,7 @@ export function HomeView({
   if (!data) return null;
   const recent = data.recent.slice(0, 18);
   const saved = data.saved_searches ?? [];
+  const recentQueries = (propRecentQueries ?? data.recent_queries ?? []).filter(Boolean);
   const suggestions = [
     t("suggestions.resume"),
     t("suggestions.screenshots"),
@@ -90,22 +95,76 @@ export function HomeView({
   ];
 
   if (recent.length === 0) {
+    if (recentQueries.length === 0) {
+      return (
+        <div className="flex flex-1 flex-col items-start justify-end gap-4 px-4 pb-8">
+          <p className="t-moment rise-in max-w-md text-muted">{t("emptyHint")}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((q, i) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onSearch(q)}
+                style={{ ["--stagger-delay" as string]: `${120 + i * 50}ms` }}
+                className="btn btn-secondary rise-in h-8 !rounded-full"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-1 flex-col items-start justify-end gap-4 px-4 pb-8">
-        <p className="t-moment rise-in max-w-md text-muted">{t("emptyHint")}</p>
-        <div className="flex flex-wrap gap-1.5">
-          {suggestions.map((q, i) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => onSearch(q)}
-              style={{ ["--stagger-delay" as string]: `${120 + i * 50}ms` }}
-              className="btn btn-secondary rise-in h-8 !rounded-full"
-            >
-              {q}
-            </button>
-          ))}
+        <div className="flex w-full flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="t-meta text-subtle">{t("recentSearches")}</span>
+            {onClearRecentQueries && (
+              <button
+                type="button"
+                onClick={onClearRecentQueries}
+                className="t-meta text-subtle transition-colors hover:text-fg cursor-pointer"
+              >
+                {t("clearRecentSearches")}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {recentQueries.map((q, i) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onSearch(q)}
+                title={q}
+                style={{ ["--stagger-delay" as string]: `${i * 35}ms` }}
+                className="btn btn-secondary rise-in h-8 max-w-[260px] truncate !rounded-full"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
+        {recentQueries.length < 3 && (
+          <div className="flex w-full flex-col gap-2 pt-1">
+            <p className="t-moment rise-in max-w-md text-muted">{t("emptyHint")}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.map((q, i) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => onSearch(q)}
+                  title={q}
+                  style={{ ["--stagger-delay" as string]: `${(recentQueries.length + i) * 35 + 80}ms` }}
+                  className="btn btn-secondary rise-in h-8 max-w-[260px] truncate !rounded-full opacity-70 hover:opacity-100"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -125,6 +184,33 @@ export function HomeView({
               {s.name}
             </button>
           ))}
+        </div>
+      )}
+      {recentQueries.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-y-2">
+          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
+            <span className="t-meta text-subtle">{t("recentSearches")}</span>
+            {recentQueries.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onSearch(q)}
+                title={q}
+                className="max-w-[240px] truncate text-[13px] text-muted underline decoration-line-strong decoration-1 underline-offset-4 transition-colors hover:text-fg hover:decoration-ink"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+          {onClearRecentQueries && (
+            <button
+              type="button"
+              onClick={onClearRecentQueries}
+              className="t-meta text-subtle transition-colors hover:text-fg"
+            >
+              {t("clearRecentSearches")}
+            </button>
+          )}
         </div>
       )}
       <p className="t-meta mb-2.5 px-0.5 text-subtle">{t("recent")}</p>
