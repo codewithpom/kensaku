@@ -477,11 +477,7 @@ fn check_last_crawl() -> DoctorCheck {
 
     // A launch that re-reads a large share of the corpus without a schema
     // rebuild or an OCR change is the pattern worth flagging.
-    let heavy = report.reindexed > 0
-        && report.walked > 0
-        && report.reindexed * 2 > report.walked
-        && !report.reason.starts_with("content index rebuilt");
-    if heavy {
+    if is_heavy_scan(&report) {
         return warn(
             "last_crawl",
             "Last index scan",
@@ -491,6 +487,22 @@ fn check_last_crawl() -> DoctorCheck {
     }
 
     ok("last_crawl", "Last index scan", detail)
+}
+
+/// Whether a crawl re-read a large share of the corpus for no stated reason.
+///
+/// A first scan — or a crawl over an index that was just recreated — re-reads
+/// everything by definition, and those files are reported as new. That is
+/// expected, so it must not surface as a warning asking the user to file a
+/// bug: every fresh install would see one (#142, #146). Only files the index
+/// had already seen are worth flagging, and only when they are not explained
+/// by a content-index rebuild.
+fn is_heavy_scan(report: &crate::indexer::CrawlReport) -> bool {
+    if report.walked == 0 || report.reason.starts_with("content index rebuilt") {
+        return false;
+    }
+    let unexplained = report.reindexed.saturating_sub(report.new_files);
+    unexplained > 0 && unexplained * 2 > report.walked
 }
 
 fn check_semantic_index(units: usize) -> DoctorCheck {
@@ -1045,6 +1057,7 @@ pub fn run(state: &AppState) -> DoctorReport {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::indexer::CrawlReport;
 
     fn extractor(command: &str, enabled: bool) -> ExternalExtractor {
         ExternalExtractor {
@@ -1109,5 +1122,72 @@ mod tests {
             check.status
         );
         assert_eq!(check.id, "disk_space");
+    }
+
+    fn crawl(walked: usize, reindexed: usize, new_files: usize, reason: &str) -> CrawlReport {
+        CrawlReport {
+            walked,
+            reindexed,
+            new_files,
+            reason: reason.to_string(),
+            ..CrawlReport::default()
+        }
+    }
+
+    #[test]
+    fn first_scan_is_not_a_heavy_scan() {
+        // #142 / #146: every file is new, so the whole corpus is re-read by
+        // definition and the user must not be told to report a bug.
+        let report = crawl(
+            88_391,
+            52_257,
+            87_387,
+            "0 left pending by an earlier scan, 54 retried, 0 given up on; 87387 new, 0 with a different size or modification time",
+        );
+        assert!(!is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn recreated_index_is_not_a_heavy_scan() {
+        let report = crawl(63_661, 37_141, 63_086, "63086 new, 0 restamped");
+        assert!(!is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn churn_over_known_files_is_a_heavy_scan() {
+        // Nothing new, yet most of the corpus was re-read: the pattern worth
+        // reporting.
+        let report = crawl(10_000, 9_000, 0, "0 new, 0 restamped");
+        assert!(is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn a_small_re_read_is_not_a_heavy_scan() {
+        let report = crawl(10_000, 500, 0, "0 new, 500 restamped");
+        assert!(!is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn a_content_index_rebuild_explains_the_re_read() {
+        let report = crawl(
+            10_000,
+            10_000,
+            0,
+            "content index rebuilt: embedding model changed",
+        );
+        assert!(!is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn a_mixed_scan_only_counts_the_unexplained_re_read() {
+        // 9,000 re-read, 8,500 of them new: 500 unexplained files out of
+        // 10,000 is ordinary churn, not a heavy scan.
+        let report = crawl(10_000, 9_000, 8_500, "8500 new, 0 restamped");
+        assert!(!is_heavy_scan(&report));
+    }
+
+    #[test]
+    fn an_empty_walk_is_not_a_heavy_scan() {
+        assert!(!is_heavy_scan(&crawl(0, 0, 0, "nothing changed")));
     }
 }
