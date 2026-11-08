@@ -14,6 +14,14 @@ versioning: [SemVer](https://semver.org/).
   `tray-light.png`) are embedded at compile time; no extra files ship at
   runtime. macOS and Linux are unchanged.
 
+### Fixed
+- **Every first scan reported itself as a health warning** (#142, #146). The
+  Health tab flagged any crawl that re-read more than half the corpus, but a
+  first scan reads everything by definition, and a crawl over a recreated index
+  does the same. New installs were told to "report this" for behaviour that is
+  expected. The crawl report now records how many entries were new, so only
+  re-reads of files the index had already seen are flagged.
+
 ## [1.0.16] — 2026-11-05
 
 ### Fixed

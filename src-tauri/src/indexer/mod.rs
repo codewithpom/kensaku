@@ -1324,6 +1324,7 @@ impl IndexerManager {
                     at: now_unix_secs(),
                     walked: files_count,
                     reindexed: content_count,
+                    new_files,
                     retried: retry_paths.len().saturating_sub(given_up),
                     abandoned: given_up,
                     reason,
@@ -2067,6 +2068,13 @@ pub struct CrawlReport {
     pub walked: usize,
     /// Files whose content was extracted (i.e. actually re-read).
     pub reindexed: usize,
+    /// Files that were absent from the content index before this crawl.
+    ///
+    /// A first scan, or an index that was recreated, re-reads every file
+    /// while reporting it here, so the doctor can tell an expected full scan
+    /// apart from churn over files it had already read.
+    #[serde(default)]
+    pub new_files: usize,
     /// Files left pending for a retry after this crawl.
     pub retried: usize,
     /// Files dropped from the retry loop (retry budget exhausted).
