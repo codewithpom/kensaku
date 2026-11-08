@@ -9,6 +9,7 @@ function systemLanguage(): SupportedLanguage {
   try {
     const raw = (navigator.language || "").toLowerCase();
     if (raw.startsWith("zh")) return "zh";
+    if (raw.startsWith("ru")) return "ru";
     return "en";
   } catch {
     return "en";

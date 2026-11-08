@@ -22,9 +22,20 @@ import zhSettings from "../locales/zh/settings.json";
 import zhSetup from "../locales/zh/setup.json";
 import zhErrors from "../locales/zh/errors.json";
 
+import ruCommon from "../locales/ru/common.json";
+import ruSearch from "../locales/ru/search.json";
+import ruHome from "../locales/ru/home.json";
+import ruResults from "../locales/ru/results.json";
+import ruDetails from "../locales/ru/details.json";
+import ruHelp from "../locales/ru/help.json";
+import ruSettings from "../locales/ru/settings.json";
+import ruSetup from "../locales/ru/setup.json";
+import ruErrors from "../locales/ru/errors.json";
+
 export const SUPPORTED_LANGUAGES = {
   en: "English",
   zh: "中文",
+  ru: "Русский",
 } as const;
 
 export type SupportedLanguage = keyof typeof SUPPORTED_LANGUAGES;
@@ -51,6 +62,17 @@ const resources = {
     settings: zhSettings,
     setup: zhSetup,
     errors: zhErrors,
+  },
+  ru: {
+    common: ruCommon,
+    search: ruSearch,
+    home: ruHome,
+    results: ruResults,
+    details: ruDetails,
+    help: ruHelp,
+    settings: ruSettings,
+    setup: ruSetup,
+    errors: ruErrors,
   },
 };
 

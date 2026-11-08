@@ -52,7 +52,7 @@ index, OCR state, everything else under the data directory):
 | `agent_scoped_roots` | string[] | `[]` | MCP/CLI read-only scope roots. Empty means the whole index. |
 | `include_ignored` | bool | `false` | Include files matched by `.gitignore` / `.cursorignore`. |
 | `theme` | string | `dark` | `light` or `dark`. Fresh installs follow the OS theme before falling back to dark. |
-| `language` | string\|null | `null` | UI language code (`en`, `zh`); `null` auto-detects the system. |
+| `language` | string\|null | `null` | UI language code (`en`, `zh`, `ru`); `null` auto-detects the system. |
 | `aliases` | object[] | `resume → cv, curriculum vitae`; `invoice → receipt, bill`; `screenshot → screen shot, capture`; plus receipt, contract, photo | Personal vocabulary for plain-language queries. |
 | `saved_searches` | object[] | `[]` | Saved queries shown on the home screen. |
 | `pins` | string[] | `[]` | Pinned file paths shown on the home screen. |

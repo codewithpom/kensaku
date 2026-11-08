@@ -15,6 +15,7 @@ pub mod ocr_indra;
 pub mod preview;
 pub mod query;
 pub mod search;
+pub mod tray_icon;
 pub mod updater;
 pub mod util;
 
@@ -589,7 +590,7 @@ pub fn run() {
             // Windows users expect a click on the tray icon to offer the
             // menu (Open / Quit), and a double-click to open. Elsewhere a
             // left click toggles the window and the menu is a right click.
-            let mut tray_builder = TrayIconBuilder::new()
+            let mut tray_builder = TrayIconBuilder::with_id("main")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(cfg!(windows))
                 .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -614,6 +615,19 @@ pub fn run() {
                     _ => {}
                 });
 
+            // On Windows, pick the initial tray icon that matches the app theme so
+            // the icon is visible on both light and dark taskbars.  Other platforms
+            // keep the default window icon (Tauri picks the best size automatically).
+            #[cfg(windows)]
+            {
+                let icon_bytes = tray_icon::tray_icon_bytes(&config.theme);
+                if let Some(icon) =
+                    tray_icon::decode_png(icon_bytes).or_else(|| app.default_window_icon().cloned())
+                {
+                    tray_builder = tray_builder.icon(icon);
+                }
+            }
+            #[cfg(not(windows))]
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
