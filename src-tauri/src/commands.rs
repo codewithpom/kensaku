@@ -467,7 +467,11 @@ pub async fn get_stats(state: State<'_, AppState>) -> Result<serde_json::Value, 
 }
 
 #[tauri::command]
-pub async fn set_theme(theme: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn set_theme(
+    app: AppHandle,
+    theme: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let lowered = theme.trim().to_ascii_lowercase();
     // "paper" / "void" are the pre-1.1 names for the same two themes.
     let normalized = match lowered.as_str() {
@@ -477,15 +481,42 @@ pub async fn set_theme(theme: String, state: State<'_, AppState>) -> Result<(), 
             return Err(format!(
                 "Unsupported theme '{}'. Expected 'light' or 'dark'.",
                 theme
-            ))
+            ));
         }
     }
     .to_string();
 
     let mut config = state.indexer.config.read().clone();
-    config.theme = normalized;
+    config.theme = normalized.clone();
     config.save()?;
     *state.indexer.config.write() = config;
+
+    // On Windows, swap the tray icon to match the new theme so it remains
+    // visible on both light and dark taskbars.  A tray failure is logged but
+    // never returned as an error: a failed icon swap must never block saving
+    // the theme.
+    #[cfg(windows)]
+    {
+        if let Some(tray) = app.tray_by_id("main") {
+            let icon_bytes = crate::tray_icon::tray_icon_bytes(&normalized);
+            match crate::tray_icon::decode_png(icon_bytes)
+                .or_else(|| app.default_window_icon().cloned())
+            {
+                Some(icon) => {
+                    if let Err(e) = tray.set_icon(Some(icon)) {
+                        eprintln!("[Kensaku] tray icon update failed: {e}");
+                    }
+                }
+                None => {
+                    eprintln!("[Kensaku] tray icon: could not decode PNG for theme '{normalized}'")
+                }
+            }
+        }
+    }
+    // Suppress unused-variable warning on non-Windows targets.
+    #[cfg(not(windows))]
+    let _ = app;
+
     Ok(())
 }
 

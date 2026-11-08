@@ -3,6 +3,17 @@
 All notable changes to Kensaku. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Dark-mode tray icon on Windows** (#46). The Windows tray icon now has a
+  light, high-contrast variant that is used when the app theme is set to
+  `dark`, so the icon stays legible on a dark taskbar. It follows the **app
+  theme** (Settings → Appearance), not the Windows taskbar setting, and swaps
+  immediately when the theme changes. Both assets (`tray-dark.png` /
+  `tray-light.png`) are embedded at compile time; no extra files ship at
+  runtime. macOS and Linux are unchanged.
+
 ## [1.0.16] — 2026-11-05
 
 ### Fixed
