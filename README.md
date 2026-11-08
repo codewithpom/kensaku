@@ -110,7 +110,7 @@ Filename tools are everywhere. Reading *inside* your files — locally, instantl
 
 **Pleasant to use**
 - Light and dark themes. Continuous-corner cards, a borderless search field, and hover details — a calm, native-feeling interface.
-- English and Simplified Chinese interface, auto-detected from the system or chosen in Settings.
+- English, Simplified Chinese, and Russian interface, auto-detected from the system or chosen in Settings.
 - Right-click for open, show in folder, copy path, and details.
 
 <p align="center">
@@ -256,7 +256,7 @@ Full threat model: [SECURITY.md](SECURITY.md).
 
 - Desktop app for Windows, macOS, and Linux: light and dark themes, grid and list results, infinite scroll, thumbnails, hover details, right-click actions
 - Two window modes: a tray launcher with a global summon keystroke (setup default) or a normal desktop app; closing either keeps the index warm
-- English and Simplified Chinese interface, auto-detected from the system or chosen in Settings
+- English, Simplified Chinese, and Russian interface, auto-detected from the system or chosen in Settings
 - Recents ranked by what you actually opened, persisted across restarts
 - Search by name, content, meaning, and typo-tolerant matches
 - Documents, code, and images (with OCR), CJK-aware

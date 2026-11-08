@@ -1,0 +1,73 @@
+{
+  "app": {
+    "name": "Kensaku"
+  },
+  "actions": {
+    "close": "Закрыть",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "copy": "Копировать",
+    "open": "Открыть",
+    "reveal": "Показать в папке",
+    "details": "Детали",
+    "preview": "Предпросмотр",
+    "search": "Поиск",
+    "retry": "Повторить",
+    "reset": "Сбросить"
+  },
+  "units": {
+    "folder": "Папка",
+    "files": "файлы",
+    "folders": "папки",
+    "results": "результаты",
+    "result_one": "результат",
+    "result_few": "результата",
+    "result_many": "результатов",
+    "result_other": "результата"
+  },
+  "time": {
+    "justNow": "только что",
+    "minutesAgo": "{{count}} мин. назад",
+    "hoursAgo": "{{count}} ч. назад",
+    "daysAgo": "{{count}} дн. назад",
+    "monthsAgo": "{{count}} мес. назад",
+    "yearsAgo": "{{count}} г. назад",
+    "duration": {
+      "zero": "0с",
+      "seconds": "{{count}}с",
+      "minutesSeconds": "{{minutes}}м {{seconds}}с",
+      "hours": "{{hours}}ч {{minutes}}м"
+    }
+  },
+  "status": {
+    "loading": "Загрузка…",
+    "indexing": "Индексация…",
+    "verifying": "Проверка файлов…",
+    "ready": "Готово",
+    "paused": "Индексация приостановлена",
+    "rebuilding": "Перестроение индекса…",
+    "indexingProgress": "Индексация {{done}} из {{total}}",
+    "indexingFiles": "Индексация файлов: {{count}}",
+    "embedding": "Файлов: {{count}} · построение семантического индекса",
+    "filesCount": "Файлов: {{count}}"
+  },
+  "health": {
+    "issue_one": "{{count}} проблема с индексом — открыть",
+    "issue_few": "{{count}} проблемы с индексом — открыть",
+    "issue_many": "{{count}} проблем с индексом — открыть",
+    "issue_other": "{{count}} проблемы с индексом — открыть",
+    "issuesShort_one": "{{count}} проблема",
+    "issuesShort_few": "{{count}} проблемы",
+    "issuesShort_many": "{{count}} проблем",
+    "issuesShort_other": "{{count}} проблемы",
+    "ok": "Индекс в порядке"
+  },
+  "update": {
+    "available": "Доступно обновление: {{version}}",
+    "label": "Обновить"
+  },
+  "stepper": {
+    "decrease": "Уменьшить",
+    "increase": "Увеличить"
+  }
+}
