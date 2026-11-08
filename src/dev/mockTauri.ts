@@ -104,7 +104,17 @@ const handlers: Record<string, (a: any) => unknown> = {
   record_recent_query: (a) => {
     const q = (a?.query ?? "").trim();
     if (!q || q.startsWith("/")) return null;
-    mockRecentQueries = [q, ...mockRecentQueries.filter((item) => item.toLowerCase() !== q.toLowerCase())].slice(0, 5);
+    // Mirror the backend: a single non-CJK character is not a search worth
+    // remembering, while a single CJK ideograph or kana is.
+    if ([...q].length === 1 && !/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(q)) return null;
+    const lower = q.toLowerCase();
+    mockRecentQueries = [
+      q,
+      ...mockRecentQueries.filter((item) => {
+        const prev = item.toLowerCase();
+        return prev !== lower && !lower.startsWith(`${prev} `);
+      }),
+    ].slice(0, 5);
     return null;
   },
   get_config: () => structuredClone(config),

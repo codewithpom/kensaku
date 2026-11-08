@@ -13,6 +13,11 @@ versioning: [SemVer](https://semver.org/).
   immediately when the theme changes. Both assets (`tray-dark.png` /
   `tray-light.png`) are embedded at compile time; no extra files ship at
   runtime. macOS and Linux are unchanged.
+- **Recent searches on the home screen** (#48). An empty search box now offers
+  the last five queries as one-click pills, or a quiet row above the recent
+  files. History is deduplicated case-insensitively and an extended query
+  replaces its shorter prefix. It lives in memory, so it is cleared when
+  Kensaku quits or from the row's Clear action.
 
 ## [1.0.16] — 2026-11-05
 

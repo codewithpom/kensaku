@@ -280,18 +280,7 @@ function App() {
 
   const loadHome = useCallback(async () => {
     try {
-      const data = await invoke<HomeData>("get_home_data");
-      if (!data.recent_queries || data.recent_queries.length === 0) {
-        try {
-          const rq = await invoke<string[]>("get_recent_queries");
-          if (Array.isArray(rq) && rq.length > 0) {
-            data.recent_queries = rq;
-          }
-        } catch {
-          // get_recent_queries not implemented or not available
-        }
-      }
-      setHome(data);
+      setHome(await invoke<HomeData>("get_home_data"));
     } catch (err) {
       console.error("Home data error:", err);
     }
