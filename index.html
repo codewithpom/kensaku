@@ -26,6 +26,17 @@
         } catch (e) { /* no matchMedia; keep the hardcoded default */ }
       }
       if (paintTheme) document.documentElement.dataset.theme = paintTheme;
+      // Surface finish: same fallbacks as applySurface() in useSurface.ts.
+      try {
+        var surface = localStorage.getItem("kensaku.surface");
+        var reduced = window.matchMedia("(prefers-reduced-transparency: reduce)").matches ||
+          window.matchMedia("(prefers-contrast: more)").matches;
+        var blurs = CSS.supports("backdrop-filter", "blur(1px)") ||
+          CSS.supports("-webkit-backdrop-filter", "blur(1px)");
+        if ((surface === "frost" || surface === "glass") && !reduced && blurs) {
+          document.documentElement.dataset.surface = surface;
+        }
+      } catch (e) { /* storage or matchMedia unavailable: solid */ }
     </script>
   </head>
 

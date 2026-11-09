@@ -33,6 +33,7 @@ import { ResultControls } from "./components/ResultControls";
 import { VirtualGrid } from "./components/VirtualGrid";
 import { FileRow } from "./components/FileRow";
 import { normalizeTheme } from "./hooks/useTheme";
+import { applySurface, normalizeSurface, storeSurface } from "./hooks/useSurface";
 import { useLanguage } from "./hooks/useLanguage";
 import { PreviewDialog } from "./components/PreviewDialog";
 import { classify } from "./lib/categories";
@@ -147,6 +148,12 @@ function App() {
       /* ignore */
     }
   }, [config?.theme]);
+  useEffect(() => {
+    if (config?.surface === undefined || config?.surface === null) return;
+    const pick = normalizeSurface(config.surface);
+    applySurface(pick);
+    storeSurface(pick);
+  }, [config?.surface]);
   useEffect(() => {
     if (isSetupComplete !== true) return;
     invoke<DoctorReport>("run_doctor")
@@ -1132,7 +1139,7 @@ function App() {
 
   return (
     <div
-      className="relative flex h-screen w-screen select-none flex-col overflow-hidden bg-bg text-fg"
+      className="app-root relative flex h-screen w-screen select-none flex-col overflow-hidden bg-bg text-fg"
       onContextMenu={(e) => e.preventDefault()}
     >
       {isSetupComplete === false && (
