@@ -14,8 +14,13 @@ export function formatBytes(bytes: number): string {
   return `${v >= 100 ? Math.round(v) : parseFloat(v.toFixed(1))} ${sizes[i]}`;
 }
 
+/** Active UI locale, as set on <html lang> by useLanguage. */
+function uiLocale(): string {
+  return (typeof document !== "undefined" && document.documentElement.lang) || "en-US";
+}
+
 export function formatComma(n: number): string {
-  return n.toLocaleString("en-US");
+  return n.toLocaleString(uiLocale());
 }
 
 export function formatRelativeTime(secs: number, t: TFunction): string {
