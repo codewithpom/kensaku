@@ -3,6 +3,7 @@ pub mod external;
 pub mod image;
 pub mod office;
 pub mod pdf;
+pub mod parquet;
 pub mod pdf_image;
 pub mod text;
 
@@ -125,6 +126,8 @@ pub enum DocumentFormat {
     Rtf,
     /// CSV and TSV: one line of text per row.
     Delimited,
+    /// Apache Parquet: schema plus the first rows, never the whole file.
+    Parquet,
     PlainText,
     Image,
     Unknown,
@@ -144,6 +147,10 @@ pub fn sniff_format(path: &Path) -> DocumentFormat {
         // RTF magic: {\rtf
         if header.starts_with(b"{\\rtf") {
             return DocumentFormat::Rtf;
+        }
+        // Parquet magic: PAR1
+        if header.starts_with(b"PAR1") {
+            return DocumentFormat::Parquet;
         }
         // Image magic bytes
         if header.starts_with(b"\x89PNG")
@@ -196,6 +203,7 @@ pub fn sniff_format(path: &Path) -> DocumentFormat {
             DocumentFormat::Image
         }
         "csv" | "tsv" => DocumentFormat::Delimited,
+        "parquet" => DocumentFormat::Parquet,
         "txt" | "md" | "markdown" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "json"
         | "toml" | "yaml" | "yml" | "xml" | "html" | "htm" | "css" | "c" | "cpp" | "h" | "java"
         | "sh" | "log" | "sql" => DocumentFormat::PlainText,
@@ -494,7 +502,13 @@ fn extract_document_tracked(
         .as_secs();
 
     // Content policy: metadata-only above the configured file-size cap.
-    if file_size > content_max_file_size_bytes() {
+    // CSV/TSV/Parquet are sampled from the head, so their cost does not grow
+    // with file size and a huge export is still worth indexing.
+    let head_sampled = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ["csv", "tsv", "parquet"].iter().any(|s| ext.eq_ignore_ascii_case(s)));
+    if file_size > content_max_file_size_bytes() && !head_sampled {
         return None;
     }
 
@@ -733,6 +747,16 @@ fn extract_document_inner(
                 is_encrypted: false,
                 is_scanned: true,
                 format_name: "Image (OCR)".to_string(),
+            })
+        }
+        DocumentFormat::Parquet => {
+            let text = parquet::extract_parquet(path, capped_bytes, csv_head_rows())?;
+            Some(DocumentExtract {
+                text,
+                page_count: None,
+                is_encrypted: false,
+                is_scanned: false,
+                format_name: "Parquet".to_string(),
             })
         }
         DocumentFormat::Delimited => {

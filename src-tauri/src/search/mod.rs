@@ -1901,7 +1901,7 @@ fn matches_type_category(typ: &str, ext_opt: Option<&str>, is_dir: bool) -> bool
         );
     }
     if ext_is(typ, &["sheet", "spreadsheet", "table"]) {
-        return ext_is(ext, &["xlsx", "xls", "ods", "csv", "tsv", "numbers"]);
+        return ext_is(ext, &["xlsx", "xls", "ods", "csv", "tsv", "parquet", "numbers"]);
     }
     if ext_is(typ, &["presentation", "slide", "slides"]) {
         return ext_is(ext, &["pptx", "ppt", "odp", "key"]);

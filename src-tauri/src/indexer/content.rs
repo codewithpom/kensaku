@@ -1393,6 +1393,7 @@ pub fn is_indexable_extension(ext_opt: Option<&str>) -> bool {
         "log",
         "csv",
         "tsv",
+        "parquet",
         "sql",
         "rb",
         "php",
