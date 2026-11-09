@@ -1,4 +1,5 @@
 pub mod delimited;
+pub mod email;
 pub mod external;
 pub mod image;
 pub mod office;
@@ -124,6 +125,10 @@ pub enum DocumentFormat {
     Ods,
     Odp,
     Rtf,
+    /// RFC 822 / MIME email.
+    Eml,
+    /// Outlook OLE/MAPI email.
+    Msg,
     /// CSV and TSV: one line of text per row.
     Delimited,
     /// Apache Parquet: schema plus the first rows, never the whole file.
@@ -199,6 +204,8 @@ pub fn sniff_format(path: &Path) -> DocumentFormat {
         "ods" => DocumentFormat::Ods,
         "odp" => DocumentFormat::Odp,
         "rtf" => DocumentFormat::Rtf,
+        "eml" => DocumentFormat::Eml,
+        "msg" => DocumentFormat::Msg,
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif" | "heic" | "heif" => {
             DocumentFormat::Image
         }
@@ -722,6 +729,26 @@ fn extract_document_inner(
                 is_encrypted: false,
                 is_scanned: false,
                 format_name: "Rich Text".to_string(),
+            })
+        }
+        DocumentFormat::Eml => {
+            let text = email::extract_eml(path, capped_bytes)?;
+            Some(DocumentExtract {
+                text,
+                page_count: None,
+                is_encrypted: false,
+                is_scanned: false,
+                format_name: "Email".to_string(),
+            })
+        }
+        DocumentFormat::Msg => {
+            let text = email::extract_msg(path, capped_bytes)?;
+            Some(DocumentExtract {
+                text,
+                page_count: None,
+                is_encrypted: false,
+                is_scanned: false,
+                format_name: "Email".to_string(),
             })
         }
         DocumentFormat::Image => {

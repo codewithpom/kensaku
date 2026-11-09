@@ -112,7 +112,7 @@ fn classify_extension(ext: &str) -> (usize, Option<usize>) {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" | "tif"
         | "heic" | "avif" => (1, None),
         "pdf" | "txt" | "doc" | "docx" | "ppt" | "pptx" | "odp" | "key" | "xls" | "xlsx"
-        | "csv" | "tsv" | "ods" | "rtf" | "odt" | "pages" | "epub" | "log" => (2, None),
+        | "csv" | "tsv" | "ods" | "rtf" | "eml" | "msg" | "odt" | "pages" | "epub" | "log" => (2, None),
         "lua" | "zig" | "nim" | "html" | "css" | "scss" | "xml" | "sql" | "conf" => (3, None),
         "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "mp3" | "flac" | "wav" | "ogg" | "m4a"
         | "aac" | "opus" => (4, None),
@@ -1903,7 +1903,7 @@ fn matches_type_category(typ: &str, ext_opt: Option<&str>, is_dir: bool) -> bool
     if ext_is(typ, &["doc", "document"]) {
         return ext_is(
             ext,
-            &["doc", "docx", "odt", "rtf", "pdf", "txt", "md", "pages", "epub"],
+            &["doc", "docx", "odt", "rtf", "eml", "msg", "pdf", "txt", "md", "pages", "epub"],
         );
     }
     if ext_is(typ, &["sheet", "spreadsheet", "table"]) {
