@@ -4,6 +4,7 @@ import { HighlightedName } from "./EmptyState";
 import { isThumbImage, useThumbnail } from "../lib/thumbnails";
 import { displayParent, formatBytes, formatRelativeTime } from "../lib/format";
 import { extOf } from "./TypeTile";
+import type { SelectMods } from "../lib/selection";
 
 /* One file per row, fixed height. Used for list results and recents so the
    two lists look identical. Mark, name over parent folder, size, age. */
@@ -31,7 +32,7 @@ export const FileRow = React.memo(function FileRow({
   query?: string;
   selected?: boolean;
   showThumbs?: boolean;
-  onSelect: () => void;
+  onSelect: (mods?: SelectMods) => void;
   onOpen: () => void;
   onContextMenu?: (x: number, y: number) => void;
 }) {
@@ -46,12 +47,15 @@ export const FileRow = React.memo(function FileRow({
       role="row"
       aria-selected={selected}
       title={item.path}
-      onClick={onSelect}
+      onMouseDown={(e) => {
+        if (e.shiftKey) e.preventDefault();
+      }}
+      onClick={(e) => onSelect({ toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
       onDoubleClick={onOpen}
       onContextMenu={(e) => {
         if (!onContextMenu) return;
         e.preventDefault();
-        onSelect();
+        onSelect({ contextMenu: true });
         onContextMenu(e.clientX, e.clientY);
       }}
       draggable

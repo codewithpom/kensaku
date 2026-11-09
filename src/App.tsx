@@ -14,6 +14,7 @@ import {
   HomeData,
   KensakuConfig,
   DoctorReport,
+  TransferReport,
 } from "./types";
 import { SetupModal } from "./components/SetupModal";
 import { DuplicatesModal } from "./components/DuplicatesModal";
@@ -32,6 +33,7 @@ import { CategoryChips } from "./components/CategoryChips";
 import { ResultControls } from "./components/ResultControls";
 import { VirtualGrid } from "./components/VirtualGrid";
 import { FileRow } from "./components/FileRow";
+import { rangeSelect, toggle, type SelectMods } from "./lib/selection";
 import { normalizeTheme } from "./hooks/useTheme";
 import { useLanguage } from "./hooks/useLanguage";
 import { PreviewDialog } from "./components/PreviewDialog";
@@ -112,6 +114,9 @@ function App() {
   const [facetInclude, setFacetInclude] = useState<Set<string>>(new Set());
   const [facetExclude, setFacetExclude] = useState<Set<string>>(new Set());
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // Explicit multi-selection (Ctrl/Shift click, Ctrl+A); empty means just the focused row.
+  const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const anchorRef = useRef(0);
   const [indexingStatus, setIndexingStatus] = useState<IndexingStatus | null>(null);
   const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
@@ -325,6 +330,7 @@ function App() {
     setFacetInclude(new Set());
     setFacetExclude(new Set());
     setSaveOpen(false);
+    setSelectedPaths(new Set());
   }, [query]);
 
   useEffect(() => {
@@ -799,6 +805,61 @@ function App() {
   );
   const navList = hasQuery ? displayResults : homeNavList;
 
+  const pickRow = useCallback(
+    (idx: number, mods?: SelectMods) => {
+      const path = displayResults[idx]?.path;
+      if (!path) return;
+      if (mods?.range) {
+        const anchor = selectedPaths.size > 0 ? anchorRef.current : selectedIndex;
+        setSelectedPaths(rangeSelect(displayResults.map((r) => r.path), anchor, idx));
+      } else if (mods?.toggle) {
+        const focused = displayResults[selectedIndex]?.path;
+        setSelectedPaths((prev) => toggle(prev.size > 0 || !focused ? prev : new Set([focused]), path));
+        anchorRef.current = idx;
+      } else if (!(mods?.contextMenu && selectedPaths.has(path))) {
+        setSelectedPaths((prev) => (prev.size > 0 ? new Set() : prev));
+        anchorRef.current = idx;
+      }
+      setSelectedIndex(idx);
+    },
+    [displayResults, selectedIndex, selectedPaths],
+  );
+  const isRowSelected = (path: string, idx: number) =>
+    selectedPaths.size > 0 ? selectedPaths.has(path) : idx === selectedIndex;
+
+  const transferSelected = useCallback(
+    async (mode: "copy" | "move") => {
+      const paths = [...selectedPaths];
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dest = await open({ directory: true, multiple: false });
+      if (typeof dest !== "string") return;
+      try {
+        const report = await invoke<TransferReport>(mode === "copy" ? "copy_files" : "move_files", {
+          paths,
+          dest,
+        });
+        flash(
+          report.failed.length === 0 && report.skipped === 0
+            ? t(mode === "copy" ? "toast.copied" : "toast.moved", { count: report.done.length })
+            : t("toast.transferPartial", {
+                done: report.done.length,
+                skipped: report.skipped,
+                failed: report.failed.length,
+              }),
+        );
+        if (mode === "move" && report.done.length > 0) {
+          const moved = new Set(report.done);
+          setResults((prev) => prev.filter((r) => !moved.has(r.path)));
+          setTotal((n) => Math.max(0, n - moved.size));
+          setSelectedPaths(new Set());
+        }
+      } catch (e) {
+        flash(String(e));
+      }
+    },
+    [selectedPaths, flash, t],
+  );
+
   /* Space previews only once the user has moved into the results with the
      arrow keys. Typing clears it, so Space still types a space in a query. */
   const navigatingRef = useRef(false);
@@ -933,6 +994,8 @@ function App() {
         e.preventDefault();
         navigatingRef.current = true;
         setNavActive(true);
+        // Arrow keys go back to moving a single focus row.
+        setSelectedPaths((prev) => (prev.size > 0 ? new Set() : prev));
         // Tab walks the list linearly from the search field: the first press
         // lands on the first result, later presses step forward (Shift+Tab
         // back) with wrap. Grid geometry is deliberately ignored — Tab is
@@ -1001,6 +1064,11 @@ function App() {
         if (resultsAreStale) return;
         e.preventDefault();
         handleCopyPath(navList[selectedIndex].path);
+      } else if ((e.key === "a" || e.key === "A") && (e.metaKey || e.ctrlKey) && (!inInput || navigatingRef.current) && hasQuery) {
+        // Select every loaded result; in the search box Ctrl+A stays "select text".
+        if (resultsAreStale) return;
+        e.preventDefault();
+        setSelectedPaths(new Set(displayResults.map((r) => r.path)));
       } else if (
         (e.key === "l" || e.key === "L") &&
         (e.metaKey || e.ctrlKey) &&
@@ -1017,7 +1085,7 @@ function App() {
         setDetails(navList[selectedIndex]);
       }
     },
-    [isSetupComplete, showSettings, showDuplicates, showHelp, details, menu, query, results, selectedIndex, commandOutput, handleRunCommand, handleOpenFile, handleOpenFolder, openSettings, view, setResultView, gridColumnCount, slashItems, slashIndex, scopePrefix, scopeItems, scopeIndex, applyScope, preview],
+    [isSetupComplete, showSettings, showDuplicates, showHelp, details, menu, query, results, selectedIndex, commandOutput, handleRunCommand, handleOpenFile, handleOpenFolder, openSettings, view, setResultView, gridColumnCount, slashItems, slashIndex, scopePrefix, scopeItems, scopeIndex, applyScope, preview, displayResults, hasQuery],
   );
 
   // Window-level, so shortcuts keep working after a dialog closes and focus
@@ -1058,6 +1126,11 @@ function App() {
         setCommandOutput(null);
         return;
       }
+      if (selectedPaths.size > 0) {
+        e.preventDefault();
+        setSelectedPaths(new Set());
+        return;
+      }
       if (query.trim()) {
         e.preventDefault();
         setQuery("");
@@ -1072,7 +1145,7 @@ function App() {
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [isSetupComplete, showSettings, showDuplicates, showHelp, preview, details, saveOpen, slashFilter, scopePrefix, commandOutput, query, config?.app_mode]);
+  }, [isSetupComplete, showSettings, showDuplicates, showHelp, preview, details, saveOpen, slashFilter, scopePrefix, commandOutput, query, config?.app_mode, selectedPaths]);
 
   // Dismiss like a launcher: hide when the window loses focus (clicking away,
   // switching apps), unless a modal overlay is open. The setup wizard and
@@ -1152,13 +1225,19 @@ function App() {
               x={menu.x}
               y={menu.y}
               onClose={() => setMenu(null)}
-              items={[
-                { label: t("contextMenu.open"), onSelect: () => handleOpenFile(menu.result.path) },
-                { label: t("contextMenu.preview"), onSelect: () => setPreview(menu.result) },
-                { label: t("contextMenu.reveal"), onSelect: () => handleOpenFolder(menu.result.path) },
-                { label: t("contextMenu.copyPath"), onSelect: () => handleCopyPath(menu.result.path) },
-                { label: t("contextMenu.details"), onSelect: () => setDetails(menu.result), separatorBefore: true },
-              ] as ContextMenuItem[]}
+              items={(selectedPaths.size > 1 && selectedPaths.has(menu.result.path)
+                ? [
+                    { label: t("contextMenu.copyTo", { count: selectedPaths.size }), onSelect: () => transferSelected("copy") },
+                    { label: t("contextMenu.moveTo", { count: selectedPaths.size }), onSelect: () => transferSelected("move") },
+                    { label: t("contextMenu.clearSelection"), onSelect: () => setSelectedPaths(new Set()), separatorBefore: true },
+                  ]
+                : [
+                    { label: t("contextMenu.open"), onSelect: () => handleOpenFile(menu.result.path) },
+                    { label: t("contextMenu.preview"), onSelect: () => setPreview(menu.result) },
+                    { label: t("contextMenu.reveal"), onSelect: () => handleOpenFolder(menu.result.path) },
+                    { label: t("contextMenu.copyPath"), onSelect: () => handleCopyPath(menu.result.path) },
+                    { label: t("contextMenu.details"), onSelect: () => setDetails(menu.result), separatorBefore: true },
+                  ]) as ContextMenuItem[]}
             />
           )}
           {details && <DetailsDialog result={details} onClose={() => setDetails(null)} />}
@@ -1370,9 +1449,9 @@ function App() {
                           <FileRow
                             item={{ path: res.path, filename: res.filename, file_size: res.file_size, modified: res.modified, is_dir: res.is_dir }}
                             query={query}
-                            selected={idx === selectedIndex}
+                            selected={isRowSelected(res.path, idx)}
                             showThumbs={showThumbs}
-                            onSelect={() => setSelectedIndex(idx)}
+                            onSelect={(mods) => pickRow(idx, mods)}
                             onOpen={() => handleOpenFile(res.path)}
                             onContextMenu={(x, y) => setMenu({ x, y, result: res })}
                           />
@@ -1381,9 +1460,9 @@ function App() {
                             result={res}
                             query={query}
                             index={idx}
-                            isSelected={idx === selectedIndex}
+                            isSelected={isRowSelected(res.path, idx)}
                             view="grid"
-                            onSelect={() => setSelectedIndex(idx)}
+                            onSelect={(mods) => pickRow(idx, mods)}
                             onOpen={() => handleOpenFile(res.path)}
                             onReveal={() => handleOpenFolder(res.path)}
                             onCopyPath={() => handleCopyPath(res.path)}

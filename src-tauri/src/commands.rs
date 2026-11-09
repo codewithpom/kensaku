@@ -538,6 +538,94 @@ pub async fn open_folder(path: String) -> Result<(), String> {
     open::that(target_dir).map_err(|e| format!("Failed to open folder: {}", e))
 }
 
+#[derive(Debug, Default, Serialize)]
+pub struct TransferReport {
+    /// Source paths that were transferred, so the UI can drop them from its list.
+    pub done: Vec<String>,
+    pub skipped: u32,
+    pub failed: Vec<TransferFailure>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TransferFailure {
+    pub path: String,
+    pub error: String,
+}
+
+/// `dir/name`, or the first free `dir/name (1).ext`, `(2)`, ... so a transfer
+/// never replaces a file that is already there.
+fn free_name(dir: &Path, file: &Path) -> PathBuf {
+    let name = file.file_name().unwrap_or_default();
+    let direct = dir.join(name);
+    if !direct.exists() {
+        return direct;
+    }
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = file.extension().map(|ext| ext.to_string_lossy());
+    (1u32..)
+        .map(|n| match &ext {
+            Some(ext) => dir.join(format!("{stem} ({n}).{ext}")),
+            None => dir.join(format!("{stem} ({n})")),
+        })
+        .find(|candidate| !candidate.exists())
+        .expect("an unbounded counter always finds a free name")
+}
+
+/// Rename, or copy then delete when the target is on another volume.
+fn move_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    if std::fs::rename(source, target).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(source, target)?;
+    std::fs::remove_file(source)
+}
+
+/// Copies or moves files into `dest`. Directories and missing paths are
+/// skipped (shortcut: files only; add recursive copy if folders are needed).
+/// One failure never stops the rest. Existing files are never overwritten.
+fn transfer(paths: &[String], dest: &Path, remove_source: bool) -> Result<TransferReport, String> {
+    if !dest.is_dir() {
+        return Err(format!("Destination is not a folder: {}", dest.display()));
+    }
+    let mut report = TransferReport::default();
+    for path in paths {
+        let source = Path::new(path);
+        // Moving a file into the folder it is already in would be a no-op.
+        if !source.is_file() || (remove_source && source.parent() == Some(dest)) {
+            report.skipped += 1;
+            continue;
+        }
+        let target = free_name(dest, source);
+        let outcome = if remove_source {
+            move_file(source, &target)
+        } else {
+            std::fs::copy(source, &target).map(|_| ())
+        };
+        match outcome {
+            Ok(()) => report.done.push(path.clone()),
+            Err(e) => report.failed.push(TransferFailure {
+                path: path.clone(),
+                error: e.to_string(),
+            }),
+        }
+    }
+    Ok(report)
+}
+
+#[tauri::command]
+pub async fn copy_files(paths: Vec<String>, dest: String) -> Result<TransferReport, String> {
+    tauri::async_runtime::spawn_blocking(move || transfer(&paths, Path::new(&dest), false))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn move_files(paths: Vec<String>, dest: String) -> Result<TransferReport, String> {
+    tauri::async_runtime::spawn_blocking(move || transfer(&paths, Path::new(&dest), true))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilePreview {
     pub path: String,
@@ -1662,6 +1750,63 @@ mod tests {
             assert!(entries.contains(&expected), "missing scope {expected}");
         }
     }
+    fn temp_dir_with(files: &[(&str, &str)]) -> PathBuf {
+        let dir = temp_path("d");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, body) in files {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+        dir
+    }
+
+    fn strings(paths: &[PathBuf]) -> Vec<String> {
+        paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn copy_keeps_the_source_and_never_overwrites() {
+        let src = temp_dir_with(&[("a.txt", "new"), ("b", "bee")]);
+        let dest = temp_dir_with(&[("a.txt", "old")]);
+        let report = transfer(&strings(&[src.join("a.txt"), src.join("b")]), &dest, false).unwrap();
+        assert_eq!((report.done.len(), report.skipped, report.failed.len()), (2, 0, 0));
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(dest.join("a (1).txt")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(dest.join("b")).unwrap(), "bee");
+        assert!(src.join("a.txt").exists());
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn move_removes_the_source_and_skips_folders_and_missing_paths() {
+        let src = temp_dir_with(&[("a.txt", "x")]);
+        let dest = temp_dir_with(&[]);
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        let paths = strings(&[src.join("a.txt"), src.join("sub"), src.join("gone.txt")]);
+        let report = transfer(&paths, &dest, true).unwrap();
+        assert_eq!((report.done.len(), report.skipped), (1, 2));
+        assert_eq!(report.done, strings(&[src.join("a.txt")]));
+        assert!(!src.join("a.txt").exists());
+        assert!(dest.join("a.txt").exists());
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn move_into_the_same_folder_is_a_no_op() {
+        let dir = temp_dir_with(&[("a.txt", "x")]);
+        let report = transfer(&strings(&[dir.join("a.txt")]), &dir, true).unwrap();
+        assert_eq!((report.done.len(), report.skipped), (0, 1));
+        assert!(dir.join("a.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn transfer_rejects_a_missing_destination() {
+        let missing = temp_path("nope");
+        assert!(transfer(&[], &missing, false).is_err());
+    }
+
 }
 
 /* ---------------------------------------------------------------- */
@@ -1781,4 +1926,5 @@ pub async fn get_updater_status() -> Result<crate::updater::UpdateStatus, String
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<(), String> {
     crate::updater::install_and_restart(&app)
+
 }

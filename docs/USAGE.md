@@ -51,10 +51,15 @@ Every action has a key. Keys work from the search box unless noted.
 | <kbd>Enter</kbd> | open the selected file |
 | <kbd>Shift</kbd>+<kbd>Enter</kbd> | show in folder |
 | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>C</kbd> | copy the selected path (outside the search box) |
+| <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>A</kbd> | select several results (<kbd>Ctrl+A</kbd> works once you are in the list); <kbd>Esc</kbd> or an arrow key clears the selection |
 | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>I</kbd> | details for the selected file |
 | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> | toggle grid / list layout |
 | <kbd>⌘,</kbd>/<kbd>Ctrl</kbd>+<kbd>,</kbd> | settings |
 | <kbd>Esc</kbd> | close a dialog, clear the search, then (launcher mode) hide |
+
+### Copy or move several results
+
+Select more than one result, right-click one of them, and choose **Copy to…** or **Move to…**. Kensaku asks for a folder and never overwrites: a name that is already there becomes `name (1).ext`. Folders in the selection are skipped, and `Ctrl+A` selects the results loaded so far. Moves across drives copy and then delete. Moved files leave the list.
 
 On Linux, set a shortcut for `kensaku --toggle` in your desktop settings. See [INSTALL.md](INSTALL.md#set-a-quick-shortcut).
 

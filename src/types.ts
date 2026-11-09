@@ -6,6 +6,12 @@ export interface SnippetDto {
   snippet: string | null;
 }
 
+export interface TransferReport {
+  done: string[];
+  skipped: number;
+  failed: { path: string; error: string }[];
+}
+
 export interface SearchResult {
   path: string;
   filename: string;

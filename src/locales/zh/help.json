@@ -11,6 +11,7 @@
     "openFile": "打开选中的文件",
     "showFolder": "在文件夹中显示",
     "copyPath": "复制选中项的路径（未选中文本时）",
+    "selectMany": "选择多个结果，然后右键复制或移动",
     "details": "查看选中文件的详情",
     "settings": "设置",
     "thisSheet": "打开本帮助",
