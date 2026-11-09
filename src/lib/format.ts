@@ -18,6 +18,18 @@ export function formatComma(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/**
+ * Absolute date and time in the app language, e.g. "Nov 7, 2026, 4:54 PM".
+ * Accepts epoch seconds (what the backend sends), epoch milliseconds, or an
+ * ISO string; the seconds/milliseconds guess lives here and nowhere else.
+ */
+export function formatDateTime(value: number | string | null | undefined, lang?: string): string {
+  if (value == null || value === 0 || value === "") return "";
+  const ms = typeof value === "number" ? (value < 1e12 ? value * 1000 : value) : Date.parse(value);
+  if (Number.isNaN(ms)) return typeof value === "string" ? value : "";
+  return new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(ms);
+}
+
 export function formatRelativeTime(secs: number, t: TFunction): string {
   if (!secs) return "";
   const now = Math.floor(Date.now() / 1000);

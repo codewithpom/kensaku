@@ -1557,7 +1557,7 @@ function AboutSection({
   config: KensakuConfig | null;
   setConfig: React.Dispatch<React.SetStateAction<KensakuConfig | null>>;
 }) {
-  const { t } = useTranslation("settings");
+  const { t, i18n } = useTranslation("settings");
   const resetPending = useResetPending();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [version, setVersion] = useState<string>("…");
@@ -1753,7 +1753,7 @@ function AboutSection({
                       </span>
                       {updateInfo.published_at && (
                         <span className="text-[11px] text-subtle">
-                          {t("about.publishedOn", { date: formatReleaseDate(updateInfo.published_at) })}
+                          {t("about.publishedOn", { date: formatReleaseDate(updateInfo.published_at, i18n.language) })}
                         </span>
                       )}
                     </div>
