@@ -137,6 +137,7 @@ Kensaku extracts formatted text from structured document formats, decoding XML e
 | **OpenDocument** | `.odt`, `.ods`, `.odp` | OASIS OpenDocument XML stream extraction (`content.xml`). |
 | **eBooks & Rich Text** | `.epub`, `.rtf` | OEBPS HTML/XHTML extraction; RTF control word stripping. |
 | **Delimited text** | `.csv`, `.tsv` | Delimiter sniff; rows become `column = "value"` with the header repeated. |
+| **Email** | `.eml`, `.msg` | RFC 822/MIME headers and body via `mail-parser`; Outlook OLE/MAPI fields via `msg_parser`. Subject, date, participants, body, and attachment names are indexed. |
 
 > Legacy binary Office formats (`.doc`, `.xls`, `.ppt`) and Apple iWork files
 > are not decoded natively. Use an [external extractor](EXTRACTORS.md) if you
