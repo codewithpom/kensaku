@@ -51,7 +51,7 @@ paddleocr_rs_onnx = { version = "0.2.8", default-features = false, optional = tr
 # available.
 ort = { version = "2.0.0-rc.15", optional = true, features = ["load-dynamic"] }
 interprocess = "2.4.7"
-base64 = "0.22"
+base64 = "0.23"
 tree-sitter = "0.27"
 tree-sitter-rust = "0.24"
 tree-sitter-python = "0.25"
