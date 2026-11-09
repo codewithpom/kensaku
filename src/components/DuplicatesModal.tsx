@@ -69,7 +69,7 @@ export function DuplicatesModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-bg">
+    <div className="sheet-bg absolute inset-0 z-50 flex flex-col bg-bg">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-5">
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight text-fg">{t("duplicates.title")}</h1>
