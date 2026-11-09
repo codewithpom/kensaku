@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { Bug, Check, Copy, Loader2, Stethoscope, Wrench } from "lucide-react";
+import { formatDateTime } from "../../lib/format";
 import { openGitHubBugReport } from "../../lib/githubIssue";
 import { DoctorCheck, DoctorReport } from "../../types";
 import { Card } from "./kit";
@@ -38,7 +39,7 @@ function sortChecks(checks: DoctorCheck[]): DoctorCheck[] {
 }
 
 export function DoctorSection() {
-  const { t } = useTranslation("settings");
+  const { t, i18n } = useTranslation("settings");
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<DoctorReport | null>(null);
   const [copied, setCopied] = useState(false);
@@ -218,7 +219,7 @@ export function DoctorSection() {
             </p>
             {report.ran_at > 0 && (
               <p className="shrink-0 font-mono text-[11px] text-subtle">
-                {new Date(report.ran_at < 1e12 ? report.ran_at * 1000 : report.ran_at).toLocaleTimeString()}
+                {formatDateTime(report.ran_at, i18n.language)}
               </p>
             )}
           </div>

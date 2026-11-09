@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { SearchResult } from "../types";
-import { formatBytes, formatRelativeTime } from "../lib/format";
+import { formatBytes, formatDateTime, formatRelativeTime } from "../lib/format";
 
 /**
  * "How we found it" view. Opened from the right-click menu, never inline.
@@ -15,7 +15,7 @@ export function DetailsDialog({
   result: SearchResult;
   onClose: () => void;
 }) {
-  const { t } = useTranslation("details");
+  const { t, i18n } = useTranslation("details");
   const { t: tCommon } = useTranslation("common");
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -31,7 +31,12 @@ export function DetailsDialog({
   const rows: [string, string][] = [
     [t("location"), result.path],
     [t("size"), formatBytes(result.file_size)],
-    [t("modified"), formatRelativeTime(result.modified, tCommon)],
+    [
+      t("modified"),
+      result.modified
+        ? `${formatDateTime(result.modified, i18n.language)} · ${formatRelativeTime(result.modified, tCommon)}`
+        : "",
+    ],
     [t("matchedBy"), matchLabel(result.match_type, t)],
     [t("score"), result.score.toFixed(2)],
   ];

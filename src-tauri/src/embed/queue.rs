@@ -235,15 +235,14 @@ impl EmbeddingQueue {
                         let _ = db.update_node_indexed_gen(node_id, 1, Some(&content_hash));
                     }
 
-                    // Batch delete + insert: one statement/pass for all nodes
+                    // Batch delete + insert in one SQLite transaction (one commit
+                    // instead of one per unit). The in-memory store is updated
+                    // afterwards so searches are not blocked behind disk writes.
+                    // A failed BEGIN means another writer holds a transaction on
+                    // this connection; its commit covers these rows.
+                    let began = db.begin_transaction().is_ok();
                     let _ = db.delete_units_for_nodes(&batch_node_ids);
-
-                    // Batch insert all units
-                    let mut unit_store_write = unit_store.write();
-                    let replaced: std::collections::HashSet<u64> =
-                        batch_node_ids.iter().copied().collect();
-                    unit_store_write.remove_units_for_nodes(&replaced);
-
+                    let mut inserted: Vec<(Unit, Vec<i8>)> = Vec::with_capacity(batch_units.len());
                     for (node_id, mut unit, vec, _hash) in batch_units {
                         if let Ok(inserted_id) = db.insert_unit(
                             node_id,
@@ -253,8 +252,19 @@ impl EmbeddingQueue {
                             &vec,
                         ) {
                             unit.id = inserted_id;
-                            unit_store_write.add_unit(unit, &vec);
+                            inserted.push((unit, vec));
                         }
+                    }
+                    if began {
+                        let _ = db.commit_transaction();
+                    }
+
+                    let mut unit_store_write = unit_store.write();
+                    let replaced: std::collections::HashSet<u64> =
+                        batch_node_ids.iter().copied().collect();
+                    unit_store_write.remove_units_for_nodes(&replaced);
+                    for (unit, vec) in inserted {
+                        unit_store_write.add_unit(unit, &vec);
                     }
                     drop(unit_store_write);
 

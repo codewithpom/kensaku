@@ -20,8 +20,9 @@ const SNIFF_BYTES: usize = 8 * 1024;
 /// How many records are compared when choosing the delimiter.
 const SNIFF_RECORDS: usize = 20;
 
-/// Extracts row text from a CSV or TSV file, reading at most `max_bytes`.
-pub fn extract_delimited(path: &Path, max_bytes: usize) -> Option<String> {
+/// Extracts text from a CSV or TSV file like `pandas.head`: a column summary
+/// and the first `head_rows` data rows, reading at most `max_bytes`.
+pub fn extract_delimited(path: &Path, max_bytes: usize, head_rows: usize) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let truncated = file.metadata().ok()?.len() > max_bytes as u64;
     let mut buffer = Vec::new();
@@ -29,12 +30,12 @@ pub fn extract_delimited(path: &Path, max_bytes: usize) -> Option<String> {
         .take(max_bytes as u64)
         .read_to_end(&mut buffer)
         .ok()?;
-    render_rows(&buffer, truncated, hint_for_path(path), max_bytes)
+    render_rows(&buffer, truncated, hint_for_path(path), max_bytes, Some(head_rows))
 }
 
 /// Row text as separate lines, for the snippet path. Rows are never split.
 pub(crate) fn row_blocks(buffer: &[u8], truncated: bool, hint: u8) -> Vec<String> {
-    render_rows(buffer, truncated, hint, usize::MAX)
+    render_rows(buffer, truncated, hint, usize::MAX, None)
         .map(|text| text.lines().map(str::to_string).collect::<Vec<String>>())
         .unwrap_or_default()
 }
@@ -44,7 +45,15 @@ pub(crate) fn row_blocks(buffer: &[u8], truncated: bool, hint: u8) -> Vec<String
 /// `truncated` means the buffer is only the start of a larger file: a last
 /// record that ends without a line break may be cut off, so it is dropped.
 /// `hint` is the delimiter to prefer when candidates look equally consistent.
-fn render_rows(buffer: &[u8], truncated: bool, hint: u8, cap: usize) -> Option<String> {
+/// `head_rows` of `Some(n)` keeps only the first `n` data rows and puts a
+/// column summary (names and inferred types) first; `None` renders every row.
+fn render_rows(
+    buffer: &[u8],
+    truncated: bool,
+    hint: u8,
+    cap: usize,
+    head_rows: Option<usize>,
+) -> Option<String> {
     let text = decode_text(buffer)?;
     if text.trim().is_empty() {
         return None;
@@ -52,6 +61,9 @@ fn render_rows(buffer: &[u8], truncated: bool, hint: u8, cap: usize) -> Option<S
     let delimiter = sniff_delimiter(&text, hint);
 
     let mut names: Option<Vec<String>> = None;
+    let mut kinds: Vec<CellKind> = Vec::new();
+    let mut data_rows = 0usize;
+    let mut sampled = false;
     let mut out = String::new();
 
     for_each_record(&text, delimiter, |fields, terminated| {
@@ -66,7 +78,16 @@ fn render_rows(buffer: &[u8], truncated: bool, hint: u8, cap: usize) -> Option<S
                     .map(|(index, raw)| column_name(raw, index))
                     .collect(),
             );
+            kinds = vec![CellKind::Empty; fields.len()];
             return true;
+        }
+        if head_rows.is_some_and(|limit| data_rows >= limit) {
+            sampled = true;
+            return false;
+        }
+        data_rows += 1;
+        for (kind, value) in kinds.iter_mut().zip(fields) {
+            *kind = kind.merge(value);
         }
         let names_ref = names.as_deref().unwrap_or(&[]);
 
@@ -107,11 +128,65 @@ fn render_rows(buffer: &[u8], truncated: bool, hint: u8, cap: usize) -> Option<S
             let keep = clip_to_char_boundary(&out, cap).len();
             out.truncate(keep);
         }
+    } else if head_rows.is_some() {
+        let mut summary = String::from(if sampled { "columns (first rows sampled): " } else { "columns: " });
+        for (index, (name, kind)) in names.iter().flatten().zip(&kinds).enumerate() {
+            if index > 0 {
+                summary.push_str(", ");
+            }
+            summary.push_str(name);
+            summary.push_str(" (");
+            summary.push_str(kind.label());
+            summary.push(')');
+        }
+        // A very wide header must not outgrow the row text it describes.
+        summary.truncate(clip_to_char_boundary(&summary, 8 * 1024).len());
+        out = format!("{summary}\n{out}");
     }
     if out.trim().is_empty() {
         None
     } else {
         Some(out)
+    }
+}
+
+/// What a column holds, judged from the sampled rows.
+#[derive(Clone, Copy, PartialEq)]
+enum CellKind {
+    Empty,
+    Integer,
+    Float,
+    Text,
+}
+
+impl CellKind {
+    fn merge(self, value: &str) -> Self {
+        let value = value.trim();
+        if value.is_empty() || self == Self::Text {
+            return self;
+        }
+        let seen = if value.parse::<i64>().is_ok() {
+            Self::Integer
+        } else if value.parse::<f64>().is_ok() {
+            Self::Float
+        } else {
+            Self::Text
+        };
+        match (self, seen) {
+            (Self::Empty, kind) => kind,
+            (Self::Integer, Self::Float) | (Self::Float, Self::Integer) => Self::Float,
+            (_, Self::Text) => Self::Text,
+            (kind, _) => kind,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Integer => "integer",
+            Self::Float => "number",
+            Self::Text => "text",
+        }
     }
 }
 
@@ -354,9 +429,37 @@ mod tests {
     }
 
     fn rows(text: &str) -> Vec<String> {
-        render_rows(text.as_bytes(), false, b',', usize::MAX)
+        render_rows(text.as_bytes(), false, b',', usize::MAX, None)
             .map(|out| out.lines().map(str::to_string).collect::<Vec<String>>())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn head_keeps_the_first_rows_and_a_typed_column_summary() {
+        let text = "id,price,name
+1,2.5,Ada
+2,3,Bob
+3,4,Cy
+4,5,Di
+";
+        let out = render_rows(text.as_bytes(), false, b',', usize::MAX, Some(2)).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines[0],
+            "columns (first rows sampled): id (integer), price (number), name (text)"
+        );
+        assert_eq!(lines.len(), 3, "summary plus two rows: {out}");
+        assert!(lines[2].contains("name = \"Bob\""));
+        assert!(!out.contains("Cy"), "rows past the head are not indexed");
+    }
+
+    #[test]
+    fn head_over_a_short_file_is_not_marked_sampled() {
+        let out = render_rows(b"a,b
+1,x
+", false, b',', usize::MAX, Some(200)).unwrap();
+        assert!(out.starts_with("columns: a (integer), b (text)
+"));
     }
 
     #[test]
@@ -379,7 +482,7 @@ mod tests {
     #[test]
     fn tsv_file_uses_tab() {
         assert_eq!(
-            render_rows(b"a\tb\n1\t2\n", false, b'\t', usize::MAX).as_deref(),
+            render_rows(b"a\tb\n1\t2\n", false, b'\t', usize::MAX, None).as_deref(),
             Some("a = \"1\", b = \"2\"")
         );
     }
@@ -387,7 +490,7 @@ mod tests {
     #[test]
     fn tab_hint_wins_a_tie_against_commas_in_values() {
         assert_eq!(
-            render_rows("a\tb,c\n1\t2,3\n".as_bytes(), false, b'\t', usize::MAX).as_deref(),
+            render_rows("a\tb,c\n1\t2,3\n".as_bytes(), false, b'\t', usize::MAX, None).as_deref(),
             Some("a = \"1\", b,c = \"2,3\"")
         );
     }
@@ -397,7 +500,7 @@ mod tests {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(b"name,city\nAda,London\n");
         assert_eq!(
-            render_rows(&bytes, false, b',', usize::MAX).as_deref(),
+            render_rows(&bytes, false, b',', usize::MAX, None).as_deref(),
             Some("name = \"Ada\", city = \"London\"")
         );
     }
@@ -412,23 +515,23 @@ mod tests {
         );
         let fixture = file_with("utf16", &bytes);
         assert_eq!(
-            extract_delimited(&fixture.0, 10_000).as_deref(),
-            Some("name = \"Ada\", city = \"London\"")
+            extract_delimited(&fixture.0, 10_000, 200).as_deref(),
+            Some("columns: name (text), city (text)\nname = \"Ada\", city = \"London\"")
         );
     }
 
     #[test]
     fn empty_and_whitespace_only_files_are_none() {
         let empty = file_with("empty", b"");
-        assert_eq!(extract_delimited(&empty.0, 1000), None);
+        assert_eq!(extract_delimited(&empty.0, 1000, 200), None);
         let blank = file_with("blank", b"  \n\n");
-        assert_eq!(extract_delimited(&blank.0, 1000), None);
+        assert_eq!(extract_delimited(&blank.0, 1000, 200), None);
     }
 
     #[test]
     fn row_wider_than_the_cap_is_cut_not_dropped() {
         let text = format!("name\n{}\n", "x".repeat(300));
-        let out = render_rows(text.as_bytes(), false, b',', 40).unwrap();
+        let out = render_rows(text.as_bytes(), false, b',', 40, None).unwrap();
         assert!(out.len() <= 40);
         assert!(out.starts_with("name = \"xxx"));
     }
@@ -460,7 +563,7 @@ mod tests {
     #[test]
     fn truncated_input_drops_the_partial_last_row() {
         assert_eq!(
-            render_rows(b"a,b\n1,2\n3,4", true, b',', usize::MAX).as_deref(),
+            render_rows(b"a,b\n1,2\n3,4", true, b',', usize::MAX, None).as_deref(),
             Some("a = \"1\", b = \"2\"")
         );
     }
@@ -468,7 +571,7 @@ mod tests {
     #[test]
     fn truncated_input_keeps_rows_that_end_at_a_line_break() {
         assert_eq!(
-            render_rows(b"a,b\n1,2\n", true, b',', usize::MAX).as_deref(),
+            render_rows(b"a,b\n1,2\n", true, b',', usize::MAX, None).as_deref(),
             Some("a = \"1\", b = \"2\"")
         );
     }
