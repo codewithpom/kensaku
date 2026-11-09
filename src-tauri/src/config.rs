@@ -204,6 +204,10 @@ pub struct KensakuConfig {
     /// configs are migrated at load (v5).
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Surface finish: "solid" (default), "frost" or "glass". Independent of
+    /// `theme`, so every finish works with light and dark.
+    #[serde(default = "default_surface")]
+    pub surface: String,
     /// UI language code ("en", "zh", …) or None for auto-detect from the
     /// system locale. Added in v7.
     #[serde(default)]
@@ -317,6 +321,20 @@ fn default_theme() -> String {
     // paints dark. Fresh installs otherwise follow the OS (see useTheme.ts
     // and #72); the frontend owns first-run resolution.
     "dark".to_string()
+}
+
+fn default_surface() -> String {
+    "solid".to_string()
+}
+
+/// The canonical surface finish for a name, or None if it is not one.
+pub fn parse_surface(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "solid" => Some("solid"),
+        "frost" => Some("frost"),
+        "glass" => Some("glass"),
+        _ => None,
+    }
 }
 
 /// Canonicalizes a theme name to "light" or "dark".
@@ -475,6 +493,7 @@ impl Default for KensakuConfig {
             app_mode: default_app_mode(),
             close_to_background: true,
             theme: default_theme(),
+            surface: default_surface(),
             language: None,
             aliases: default_aliases(),
             saved_searches: Vec::new(),
@@ -1088,6 +1107,15 @@ mod tests {
             assert_eq!(cfg.theme, expected, "theme {} should become {}", stored, expected);
             assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
         }
+    }
+
+    #[test]
+    fn surface_names_parse_and_default_to_solid() {
+        assert_eq!(parse_surface(" Frost "), Some("frost"));
+        assert_eq!(parse_surface("GLASS"), Some("glass"));
+        assert_eq!(parse_surface("solid"), Some("solid"));
+        assert_eq!(parse_surface("liquid"), None);
+        assert_eq!(KensakuConfig::default().surface, "solid");
     }
 
     #[test]

@@ -51,6 +51,7 @@ index, OCR state, everything else under the data directory):
 | `content_max_semantic_units` | number | `48` | Maximum embedding chunks per document. |
 | `agent_scoped_roots` | string[] | `[]` | MCP/CLI read-only scope roots. Empty means the whole index. |
 | `include_ignored` | bool | `false` | Include files matched by `.gitignore` / `.cursorignore`. |
+| `surface` | string | `solid` | Finish on top of the theme: `solid`, `frost` (soft frosted panels) or `glass` (deeper blur, specular edge). Falls back to solid when the system reduces transparency. |
 | `theme` | string | `dark` | `light` or `dark`. Fresh installs follow the OS theme before falling back to dark. |
 | `language` | string\|null | `null` | UI language code (`en`, `zh`, `ru`); `null` auto-detects the system. |
 | `aliases` | object[] | `resume → cv, curriculum vitae`; `invoice → receipt, bill`; `screenshot → screen shot, capture`; plus receipt, contract, photo | Personal vocabulary for plain-language queries. |

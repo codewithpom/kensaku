@@ -521,6 +521,17 @@ pub async fn set_theme(
 }
 
 #[tauri::command]
+pub async fn set_surface(surface: String, state: State<'_, AppState>) -> Result<(), String> {
+    let normalized = crate::config::parse_surface(&surface)
+        .ok_or_else(|| format!("Unsupported surface '{surface}'. Expected 'solid', 'frost' or 'glass'."))?;
+    let mut config = state.indexer.config.read().clone();
+    config.surface = normalized.to_string();
+    config.save()?;
+    *state.indexer.config.write() = config;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
     state.indexer.metadata.read().record_open(Path::new(&path));
     open::that(&path).map_err(|e| format!("Failed to open file: {}", e))

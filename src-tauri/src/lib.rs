@@ -482,6 +482,7 @@ pub fn run() {
             commands::get_indexing_status,
             commands::get_stats,
             commands::set_theme,
+            commands::set_surface,
             commands::open_file,
             commands::open_folder,
             commands::get_file_preview,

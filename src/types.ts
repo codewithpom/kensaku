@@ -185,6 +185,7 @@ export interface KensakuConfig {
   /** Closing the window hides to the tray instead of quitting. */
   close_to_background?: boolean;
   theme?: "light" | "dark";
+  surface?: "solid" | "frost" | "glass";
   language?: string | null;
   aliases?: Alias[];
   saved_searches?: SavedSearch[];
