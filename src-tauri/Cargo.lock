@@ -3248,12 +3248,6 @@ name = "lz4_flex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
-
-[[package]]
-name = "lz4_flex"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 dependencies = [
  "twox-hash",
 ]
@@ -4210,14 +4204,14 @@ dependencies = [
  "flate2",
  "half",
  "hashbrown 0.17.1",
- "lz4_flex 0.14.0",
+ "lz4_flex",
  "num-bigint 0.5.1",
  "num-integer",
  "num-traits",
  "seq-macro",
  "snap",
  "twox-hash",
- "zstd 0.14.3",
+ "zstd",
 ]
 
 [[package]]
@@ -5760,7 +5754,7 @@ dependencies = [
  "levenshtein_automata",
  "log",
  "lru",
- "lz4_flex 0.13.1",
+ "lz4_flex",
  "measure_time",
  "memmap2",
  "once_cell",
