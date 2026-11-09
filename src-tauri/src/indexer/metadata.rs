@@ -113,8 +113,12 @@ impl MetadataStore {
         *self.bursts.write() = None;
 
         let count = entries.len();
-        // First pass: push nodes (parents resolved later).
+        // First pass: push nodes (parents resolved later). The path index is
+        // built last: its `grow` re-keys slots from `arena.path()`, which is only
+        // the bare file name until parents are linked.
         let mut idxs = Vec::with_capacity(entries.len());
+        let mut by_path: std::collections::HashMap<&Path, u32> =
+            std::collections::HashMap::with_capacity(entries.len());
         for entry in &entries {
             let ext_id = self.arena.intern_ext(entry.extension);
             let (name_off, name_len) = self.arena.names.push(&entry.name);
@@ -139,12 +143,16 @@ impl MetadataStore {
                 node_id: entry.id,
             };
             let idx = self.arena.push(node);
-            self.path_index.insert(&self.arena, &entry.path, idx);
+            by_path.insert(entry.path.as_path(), idx);
             idxs.push(idx);
         }
         // Second pass: resolve parent pointers.
         for (entry, &idx) in entries.iter().zip(idxs.iter()) {
-            let parent = self.parent_index_for(&entry.path);
+            let parent = entry
+                .path
+                .parent()
+                .and_then(|parent| by_path.get(parent).copied())
+                .unwrap_or(NO_PARENT);
             if parent == NO_PARENT {
                 let full = entry.path.to_string_lossy().into_owned();
                 let (off, len) = self.arena.names.push(&full);
@@ -156,6 +164,10 @@ impl MetadataStore {
                 let node = self.arena.node_mut(idx);
                 node.parent = parent;
             }
+        }
+        // Third pass: every node now has its final name and parent.
+        for (entry, &idx) in entries.iter().zip(idxs.iter()) {
+            self.path_index.insert(&self.arena, &entry.path, idx);
         }
 
         if let Ok(loaded_bursts) = db.load_bursts() {
@@ -1088,5 +1100,43 @@ mod tests {
             "replacing an entry must preserve its pending flag"
         );
         assert_eq!(stored.size, 20, "the new metadata must still be applied");
+    }
+
+    #[test]
+    fn reloading_from_the_database_finds_every_path() {
+        let mut temp = TempStore::new("reload");
+        let root = temp.dir.join("root");
+        let store = temp.store();
+        store.add(entry(&root, true));
+        // Same file names in every directory, and enough rows to force the
+        // path index to grow several times while loading.
+        let names = ["index.js", "README.md", "notes.txt", "a.png"];
+        let mut paths = vec![root.clone()];
+        for d in 0..30 {
+            let dir = root.join(format!("dir{d}"));
+            store.add(entry(&dir, true));
+            paths.push(dir.clone());
+            for f in 0..20 {
+                let file = dir.join(format!("{f}-{}", names[f % names.len()]));
+                let same_name = dir.join(names[f % names.len()]);
+                store.add(entry(&file, false));
+                store.add(entry(&same_name, false));
+                paths.push(file);
+                paths.push(same_name);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+
+        temp.store.take();
+        let db = MetadataDb::open_in_dir(&temp.dir).expect("reopen db");
+        let reloaded = MetadataStore::with_db(db);
+
+        for path in &paths {
+            let idx = reloaded.get_index(path);
+            assert!(idx.is_some(), "lost after reload: {}", path.display());
+            assert_eq!(&reloaded.path(idx.unwrap()), path);
+        }
+        assert_eq!(reloaded.len(), paths.len());
     }
 }
