@@ -48,11 +48,11 @@ export function formatBytes(bytes?: number | null): string {
 /**
  * Formats an ISO date into localized short date.
  */
-export function formatReleaseDate(iso?: string | null): string {
+export function formatReleaseDate(iso?: string | null, lang?: string): string {
   if (!iso) return "";
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
+    return d.toLocaleDateString(lang, {
       year: "numeric",
       month: "short",
       day: "numeric",

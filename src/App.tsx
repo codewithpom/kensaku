@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -16,18 +16,14 @@ import {
   DoctorReport,
   TransferReport,
 } from "./types";
-import { SetupModal } from "./components/SetupModal";
-import { DuplicatesModal } from "./components/DuplicatesModal";
 import { SlashMenu, SlashCommand } from "./components/SlashMenu";
 import { ScopeMenu } from "./components/ScopeMenu";
 import { HomeView } from "./components/HomeView";
 import { ResultItem, ResultView } from "./components/ResultItem";
-import { Settings } from "./components/SettingsModal";
 import { FilterChips } from "./components/FilterChips";
 import { KeyHintStrip } from "./components/KeyHintStrip";
 import { ContextMenu, ContextMenuItem } from "./components/ContextMenu";
 import { DetailsDialog } from "./components/DetailsDialog";
-import { HelpDialog } from "./components/HelpDialog";
 import { SearchBar } from "./components/SearchBar";
 import { CategoryChips } from "./components/CategoryChips";
 import { ResultControls } from "./components/ResultControls";
@@ -36,7 +32,6 @@ import { FileRow } from "./components/FileRow";
 import { rangeSelect, toggle, type SelectMods } from "./lib/selection";
 import { normalizeTheme } from "./hooks/useTheme";
 import { useLanguage } from "./hooks/useLanguage";
-import { PreviewDialog } from "./components/PreviewDialog";
 import { classify } from "./lib/categories";
 import { shouldHideOnBlur } from "./lib/dismiss";
 import { useMeasuredHeight } from "./lib/useMeasuredHeight";
@@ -60,6 +55,13 @@ import {
   X,
 } from "lucide-react";
 import "./App.css";
+
+// Dialogs load on first open so the window's initial bundle stays small.
+const SetupModal = lazy(() => import("./components/SetupModal").then((m) => ({ default: m.SetupModal })));
+const DuplicatesModal = lazy(() => import("./components/DuplicatesModal").then((m) => ({ default: m.DuplicatesModal })));
+const Settings = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.Settings })));
+const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
+const PreviewDialog = lazy(() => import("./components/PreviewDialog").then((m) => ({ default: m.PreviewDialog })));
 
 const SNIPPET_LRU_LIMIT = 200;
 
@@ -312,14 +314,34 @@ function App() {
       .then(setIndexingStatus)
       .catch((err) => console.error("Initial status error:", err));
 
+    // The backend emits from many places during a crawl. Re-rendering the whole
+    // app per event costs more than the indexer's own work, so apply at most
+    // one update per 250 ms; the latest payload always lands, so the final
+    // "idle" state is never dropped.
     let unlisten: (() => void) | undefined;
-    listen<IndexingStatus>("indexing-status", (event) => setIndexingStatus(event.payload))
+    let pending: IndexingStatus | null = null;
+    let timer: number | undefined;
+    let lastApplied = 0;
+    const apply = () => {
+      timer = undefined;
+      if (!pending) return;
+      setIndexingStatus(pending);
+      pending = null;
+      lastApplied = Date.now();
+    };
+    listen<IndexingStatus>("indexing-status", (event) => {
+      pending = event.payload;
+      const wait = 250 - (Date.now() - lastApplied);
+      if (wait <= 0) apply();
+      else if (timer === undefined) timer = window.setTimeout(apply, wait);
+    })
       .then((off) => {
         unlisten = off;
       })
       .catch((err) => console.error("Event listen error:", err));
 
     return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
       if (unlisten) unlisten();
     };
   }, [isSetupComplete]);
@@ -1209,17 +1231,23 @@ function App() {
       onContextMenu={(e) => e.preventDefault()}
     >
       {isSetupComplete === false && (
-        <SetupModal
-          onSetupCompleted={() => {
-            setIsSetupComplete(true);
-            window.setTimeout(() => inputRef.current?.focus(), 120);
-          }}
-        />
+        <Suspense fallback={null}>
+          <SetupModal
+            onSetupCompleted={() => {
+              setIsSetupComplete(true);
+              window.setTimeout(() => inputRef.current?.focus(), 120);
+            }}
+          />
+        </Suspense>
       )}
 
       {isSetupComplete === true && (
         <>
-          {showDuplicates && <DuplicatesModal onClose={() => setShowDuplicates(false)} />}
+          {showDuplicates && (
+            <Suspense fallback={null}>
+              <DuplicatesModal onClose={() => setShowDuplicates(false)} />
+            </Suspense>
+          )}
           {menu && (
             <ContextMenu
               x={menu.x}
@@ -1241,25 +1269,33 @@ function App() {
             />
           )}
           {details && <DetailsDialog result={details} onClose={() => setDetails(null)} />}
-          {showHelp && <HelpDialog onClose={() => setShowHelp(false)} />}
+          {showHelp && (
+            <Suspense fallback={null}>
+              <HelpDialog onClose={() => setShowHelp(false)} />
+            </Suspense>
+          )}
           {preview && (
-            <PreviewDialog
-              result={preview}
-              onOpen={() => handleOpenFile(preview.path)}
-              onClose={() => setPreview(null)}
-            />
+            <Suspense fallback={null}>
+              <PreviewDialog
+                result={preview}
+                onOpen={() => handleOpenFile(preview.path)}
+                onClose={() => setPreview(null)}
+              />
+            </Suspense>
           )}
 
           {/* Search bar */}
           {showSettings && (
             <div className="absolute inset-0 z-40">
-              <Settings
-                onClose={() => setShowSettings(false)}
-                initialSection={settingsSection}
-                onConfigSaved={() => {
-                  invoke<IndexingStatus>("get_indexing_status").then(setIndexingStatus);
-                }}
-              />
+              <Suspense fallback={null}>
+                <Settings
+                  onClose={() => setShowSettings(false)}
+                  initialSection={settingsSection}
+                  onConfigSaved={() => {
+                    invoke<IndexingStatus>("get_indexing_status").then(setIndexingStatus);
+                  }}
+                />
+              </Suspense>
             </div>
           )}
 

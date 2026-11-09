@@ -93,30 +93,29 @@ impl ExactScanner {
                 .or_insert((sim, unit_idx));
         }
 
-        let mut hits: Vec<SemanticHit> = node_best
+        // Rank on (node, score, unit index) and clone a Unit only for the
+        // survivors: most nodes above the threshold are cut by `limit`.
+        let mut ranked: Vec<(u64, f32, usize)> = node_best
             .into_iter()
-            .map(|(node_id, (score, best_idx))| SemanticHit {
+            .map(|(node_id, (score, best_idx))| (node_id, score, best_idx))
+            .collect();
+        let by_score = |a: &(u64, f32, usize), b: &(u64, f32, usize)| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        };
+        if ranked.len() > limit {
+            ranked.select_nth_unstable_by(limit, by_score);
+            ranked.truncate(limit);
+        }
+        ranked.sort_by(by_score);
+
+        ranked
+            .into_iter()
+            .map(|(node_id, score, best_idx)| SemanticHit {
                 node_id,
                 score,
                 best_unit: units[best_idx].clone(),
             })
-            .collect();
-
-        if hits.len() > limit {
-            hits.select_nth_unstable_by(limit, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            hits.truncate(limit);
-        }
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        hits
+            .collect()
     }
 }
 

@@ -187,41 +187,49 @@ pub async fn search(
         return Ok(resp);
     }
 
-    let indexer = &state.indexer;
-    indexer.query_in_flight.store(true, Ordering::SeqCst);
+    // The query holds several index read locks and does CPU-bound work; run it
+    // on the blocking pool so it cannot stall the async runtime that serves IPC.
+    let indexer = std::sync::Arc::clone(&state.indexer);
+    let offset = offset.unwrap_or(0);
+    let resp = tauri::async_runtime::spawn_blocking(move || {
+        indexer.query_in_flight.store(true, Ordering::SeqCst);
 
-    let metadata = indexer.metadata.read();
-    let content_index = indexer.content_index.read();
-    let unit_store = indexer.unit_store.read();
-    let cfg = indexer.config.read();
-    let max_results = cfg.max_results;
-    let semantic_enabled = cfg.semantic_enabled;
-    let aliases = cfg.alias_pairs();
+        let metadata = indexer.metadata.read();
+        let content_index = indexer.content_index.read();
+        let unit_store = indexer.unit_store.read();
+        let cfg = indexer.config.read();
+        let max_results = cfg.max_results;
+        let semantic_enabled = cfg.semantic_enabled;
+        let aliases = cfg.alias_pairs();
 
-    // The UI asks for snippets separately (`get_snippets`) so the search
-    // itself never touches file contents.
-    let sort = sort
-        .as_deref()
-        .map(crate::search::SortOrder::parse)
-        .unwrap_or_default();
-    let visual_store = indexer.visual_store.read();
-    let resp = SearchDispatcher::search_response_fast_sorted_with_snippets_and_visual(
-        &query,
-        &metadata,
-        &content_index,
-        Some(&unit_store),
-        Some(&visual_store),
-        semantic_enabled,
-        max_results,
-        req_seq,
-        sort,
-        &aliases,
-        offset.unwrap_or(0),
-        false,
-    );
+        // The UI asks for snippets separately (`get_snippets`) so the search
+        // itself never touches file contents.
+        let sort = sort
+            .as_deref()
+            .map(crate::search::SortOrder::parse)
+            .unwrap_or_default();
+        let visual_store = indexer.visual_store.read();
+        let resp = SearchDispatcher::search_response_fast_sorted_with_snippets_and_visual(
+            &query,
+            &metadata,
+            &content_index,
+            Some(&unit_store),
+            Some(&visual_store),
+            semantic_enabled,
+            max_results,
+            req_seq,
+            sort,
+            &aliases,
+            offset,
+            false,
+        );
 
-    indexer.query_in_flight.store(false, Ordering::SeqCst);
-    record_query_latency(started.elapsed().as_micros() as u64);
+        indexer.query_in_flight.store(false, Ordering::SeqCst);
+        record_query_latency(started.elapsed().as_micros() as u64);
+        resp
+    })
+    .await
+    .map_err(|e| format!("search task failed: {e}"))?;
     Ok(resp)
 }
 
@@ -463,7 +471,11 @@ pub async fn get_stats(state: State<'_, AppState>) -> Result<serde_json::Value, 
     if let Some(daemon) = state.daemon.as_ref() {
         return daemon.get_stats();
     }
-    stats_for(&state.indexer)
+    // Walks the index directory and queries SQLite; keep it off the async runtime.
+    let indexer = std::sync::Arc::clone(&state.indexer);
+    tauri::async_runtime::spawn_blocking(move || stats_for(&indexer))
+        .await
+        .map_err(|e| format!("stats task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -1157,7 +1169,7 @@ pub async fn complete_setup(
     crate::indexer::extract::set_ocr_enabled(config.ocr_enabled);
     crate::indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
     crate::indexer::extract::set_ocr_languages(config.ocr_languages.clone());
-    crate::indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes);
+    crate::indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes, config.content_csv_head_rows);
     crate::embed::set_max_semantic_units(config.content_max_semantic_units);
     crate::ocr::set_engine(&config.ocr_engine);
     crate::indexer::extract::set_external_extractors(config.extractors.clone());

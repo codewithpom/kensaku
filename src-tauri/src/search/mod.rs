@@ -1049,7 +1049,12 @@ impl SearchDispatcher {
             && !search_text.is_empty()
             && !has_near
             && ModelRegistry::global().is_enabled();
-        let wants_visual = visual_store.is_some() && !search_text.is_empty() && !has_near;
+        // No encoder means the visual tier never runs; building the id map for it
+        // would cost O(corpus) on every text query for nothing.
+        let wants_visual = crate::embed::visual::visual_available()
+            && visual_store.is_some()
+            && !search_text.is_empty()
+            && !has_near;
         let (node_to_idx, allowed_node_ids): (HashMap<u64, usize>, Option<HashSet<u64>>) =
             if wants_semantic || wants_visual {
                 let mut map = HashMap::new();
@@ -1060,7 +1065,8 @@ impl SearchDispatcher {
                         map.insert(entry.id, idx);
                     }
                 }
-                let allowed = if map.is_empty() {
+                // An unfiltered query allows every node, so the set filters nothing.
+                let allowed = if map.is_empty() || candidate_set.all {
                     None
                 } else {
                     Some(map.keys().copied().collect())
@@ -1901,7 +1907,7 @@ fn matches_type_category(typ: &str, ext_opt: Option<&str>, is_dir: bool) -> bool
         );
     }
     if ext_is(typ, &["sheet", "spreadsheet", "table"]) {
-        return ext_is(ext, &["xlsx", "xls", "ods", "csv", "tsv", "numbers"]);
+        return ext_is(ext, &["xlsx", "xls", "ods", "csv", "tsv", "parquet", "numbers"]);
     }
     if ext_is(typ, &["presentation", "slide", "slides"]) {
         return ext_is(ext, &["pptx", "ppt", "odp", "key"]);

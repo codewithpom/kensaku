@@ -188,6 +188,10 @@ pub struct KensakuConfig {
     /// Maximum extracted text (in bytes) per document. Default 1 MB.
     #[serde(default = "default_content_max_text_bytes")]
     pub content_max_text_bytes: usize,
+    /// Data rows indexed per CSV/TSV/Parquet file, after the header (like
+    /// `pandas.head`). Larger files are sampled, not read in full. Default 200.
+    #[serde(default = "default_content_csv_head_rows")]
+    pub content_csv_head_rows: usize,
     /// Maximum semantic units (chunks) per document. Default 20.
     #[serde(default = "default_content_max_semantic_units")]
     pub content_max_semantic_units: usize,
@@ -303,6 +307,12 @@ fn default_content_max_file_size_mb() -> u64 {
 /// extraction timeout scales with file size.
 fn default_content_max_text_bytes() -> usize {
     4_000_000
+}
+
+/// Rows past this are not searchable by value; the header and column types
+/// still are. Raise it to trade indexing time for deeper row search.
+fn default_content_csv_head_rows() -> usize {
+    200
 }
 
 /// 48 overlapping chunks covers roughly the first 9,000 words. Only large
@@ -464,6 +474,7 @@ impl Default for KensakuConfig {
             content_depth: default_content_depth(),
             content_max_file_size_mb: default_content_max_file_size_mb(),
             content_max_text_bytes: default_content_max_text_bytes(),
+            content_csv_head_rows: default_content_csv_head_rows(),
             content_max_semantic_units: default_content_max_semantic_units(),
             agent_scoped_roots: Vec::new(),
             include_ignored: false,

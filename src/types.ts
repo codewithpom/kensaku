@@ -176,6 +176,7 @@ export interface KensakuConfig {
   content_depth?: string;
   content_max_file_size_mb?: number;
   content_max_text_bytes?: number;
+  content_csv_head_rows?: number;
   content_max_semantic_units?: number;
   crawl_mode?: "full" | "balanced" | "eco";
   pause_indexing?: boolean;
