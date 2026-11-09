@@ -1,6 +1,7 @@
+use crate::config::KensakuConfig;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
@@ -59,8 +60,16 @@ pub struct UpdateStatus {
 /// Returns true only if `candidate` is strictly newer.
 pub fn is_newer_version(candidate: &str, current: &str) -> bool {
     fn parse(v: &str) -> Vec<u64> {
-        let clean = v.trim().trim_start_matches('v').split(['-', '+']).next().unwrap_or("");
-        clean.split('.').filter_map(|s| s.parse::<u64>().ok()).collect()
+        let clean = v
+            .trim()
+            .trim_start_matches('v')
+            .split(['-', '+'])
+            .next()
+            .unwrap_or("");
+        clean
+            .split('.')
+            .filter_map(|s| s.parse::<u64>().ok())
+            .collect()
     }
     let a = parse(candidate);
     let b = parse(current);
@@ -84,17 +93,30 @@ pub fn select_platform_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
         "windows" => {
             let is_arm = arch == "aarch64" || arch == "arm64";
             if is_arm {
-                if let Some(a) = assets.iter().find(|a| a.name.to_lowercase().contains("arm64") && a.name.ends_with("-setup.exe")) {
+                if let Some(a) = assets.iter().find(|a| {
+                    a.name.to_lowercase().contains("arm64") && a.name.ends_with("-setup.exe")
+                }) {
                     return Some(a.clone());
                 }
-                if let Some(a) = assets.iter().find(|a| a.name.to_lowercase().contains("arm64") && a.name.ends_with(".msi")) {
+                if let Some(a) = assets
+                    .iter()
+                    .find(|a| a.name.to_lowercase().contains("arm64") && a.name.ends_with(".msi"))
+                {
                     return Some(a.clone());
                 }
             } else {
-                if let Some(a) = assets.iter().find(|a| (a.name.to_lowercase().contains("x64") || a.name.to_lowercase().contains("x86_64")) && a.name.ends_with("-setup.exe")) {
+                if let Some(a) = assets.iter().find(|a| {
+                    (a.name.to_lowercase().contains("x64")
+                        || a.name.to_lowercase().contains("x86_64"))
+                        && a.name.ends_with("-setup.exe")
+                }) {
                     return Some(a.clone());
                 }
-                if let Some(a) = assets.iter().find(|a| (a.name.to_lowercase().contains("x64") || a.name.to_lowercase().contains("x86_64")) && a.name.ends_with(".msi")) {
+                if let Some(a) = assets.iter().find(|a| {
+                    (a.name.to_lowercase().contains("x64")
+                        || a.name.to_lowercase().contains("x86_64"))
+                        && a.name.ends_with(".msi")
+                }) {
                     return Some(a.clone());
                 }
             }
@@ -109,10 +131,16 @@ pub fn select_platform_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
             }
         }
         "macos" => {
-            if let Some(a) = assets.iter().find(|a| a.name.to_lowercase().contains("universal") && a.name.ends_with(".dmg")) {
+            if let Some(a) = assets
+                .iter()
+                .find(|a| a.name.to_lowercase().contains("universal") && a.name.ends_with(".dmg"))
+            {
                 return Some(a.clone());
             }
-            if let Some(a) = assets.iter().find(|a| a.name.to_lowercase().contains(arch) && a.name.ends_with(".dmg")) {
+            if let Some(a) = assets
+                .iter()
+                .find(|a| a.name.to_lowercase().contains(arch) && a.name.ends_with(".dmg"))
+            {
                 return Some(a.clone());
             }
             if let Some(a) = assets.iter().find(|a| a.name.ends_with(".dmg")) {
@@ -162,7 +190,10 @@ pub fn check_for_update() -> Result<UpdateInfo, String> {
     let url = "https://api.github.com/repos/yjid/kensaku/releases/latest";
 
     let resp: GitHubRelease = ureq::get(url)
-        .set("User-Agent", &format!("kensaku-updater/{}", current_version))
+        .set(
+            "User-Agent",
+            &format!("kensaku-updater/{}", current_version),
+        )
         .timeout(METADATA_TIMEOUT)
         .call()
         .map_err(|e| format!("Failed to reach GitHub release API: {e}"))?
@@ -190,7 +221,9 @@ pub fn check_for_update() -> Result<UpdateInfo, String> {
         release_url: resp.html_url,
         published_at: resp.published_at.unwrap_or_default(),
         asset_name: chosen_asset.as_ref().map(|a| a.name.clone()),
-        asset_url: chosen_asset.as_ref().map(|a| a.browser_download_url.clone()),
+        asset_url: chosen_asset
+            .as_ref()
+            .map(|a| a.browser_download_url.clone()),
         asset_size: chosen_asset.as_ref().map(|a| a.size),
     })
 }
@@ -252,7 +285,8 @@ fn expected_sha256(asset_name: &str) -> Result<Option<String>, String> {
 
 fn sha256_of(path: &std::path::Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(path).map_err(|e| format!("Could not open download: {e}"))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("Could not open download: {e}"))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
@@ -273,6 +307,167 @@ fn sha256_of(path: &std::path::Path) -> Result<String, String> {
     Ok(hex)
 }
 
+/// Directory that holds staged update downloads.
+///
+/// This lives under Kensaku's own data directory rather than the system temp
+/// directory. The old code used a fixed `/tmp/kensaku-updates` path, so any
+/// local user could pre-create it, own it, and control what the updater wrote
+/// or executed.
+fn update_staging_root() -> PathBuf {
+    KensakuConfig::config_dir().join("updates")
+}
+
+/// Rejects asset names that are not a single plain file name.
+///
+/// The name comes from the GitHub release JSON and is joined onto a local
+/// directory before the file is executed. A separator, a parent component or a
+/// control character means the release metadata is malformed; refusing the
+/// update is safer than guessing at the intended file.
+fn validate_asset_name(asset_name: &str) -> Result<(), String> {
+    if asset_name.is_empty() {
+        return Err("Update asset name is empty".to_string());
+    }
+    if asset_name.len() > 255 {
+        return Err("Update asset name is too long".to_string());
+    }
+    if asset_name == "." || asset_name == ".." {
+        return Err(format!("Invalid update asset name: {asset_name}"));
+    }
+    if asset_name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+    {
+        return Err(format!("Invalid update asset name: {asset_name}"));
+    }
+    Ok(())
+}
+
+/// Creates `path` if needed and guarantees it is a private directory we own.
+///
+/// `create_dir_all` alone is not enough: it succeeds on an existing directory
+/// (including one created by another user) and follows symlinks. Both cases
+/// let an attacker choose where the updater writes. Every caller must run this
+/// before using a staging directory.
+fn ensure_private_staging_dir(path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path)
+        .map_err(|e| format!("Could not create update directory {path:?}: {e}"))?;
+
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Could not inspect update directory {path:?}: {e}"))?;
+    if !meta.file_type().is_dir() {
+        return Err(format!(
+            "Update directory {path:?} is not a real directory (symlink or file)"
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        // `libc::geteuid` is always safe; no pointer arguments.
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid {
+            return Err(format!(
+                "Update directory {path:?} is owned by uid {}, not the current user (uid {euid})",
+                meta.uid()
+            ));
+        }
+
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("Could not restrict update directory permissions: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Creates a fresh, unpredictable staging directory under the staging root.
+///
+/// `create_dir` (not `create_dir_all`) is atomic and fails if the name already
+/// exists, so a pre-created directory can never be reused. The name is seeded
+/// from the OS-random `RandomState`, plus pid and time, so it is not
+/// predictable from the outside.
+fn create_staging_dir(root: &Path) -> Result<PathBuf, String> {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    ensure_private_staging_dir(root)?;
+
+    for attempt in 0..16u32 {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        hasher.write_u32(attempt);
+        if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            hasher.write_u128(now.as_nanos());
+        }
+        let name = format!("{:016x}", hasher.finish());
+        let candidate = root.join(name);
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => {
+                ensure_private_staging_dir(&candidate)?;
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(format!(
+                    "Could not create update staging directory {candidate:?}: {e}"
+                ));
+            }
+        }
+    }
+
+    Err("Could not allocate a unique update staging directory".to_string())
+}
+
+/// Re-validates a downloaded file immediately before it is executed.
+///
+/// The path is untrusted by then: it may have been replaced or pointed at a
+/// symlink after the download finished. Require a regular file that lives in a
+/// direct child of our private staging root, owned by the current user and not
+/// writable by anyone else.
+fn validate_staged_update(path: &Path) -> Result<(), String> {
+    let root = update_staging_root();
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Invalid update path: {path:?}"))?;
+    if parent.parent() != Some(root.as_path()) {
+        return Err(format!(
+            "Refusing to install an update outside the staging directory: {path:?}"
+        ));
+    }
+    ensure_private_staging_dir(parent)?;
+
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Downloaded update file does not exist at {path:?}: {e}"))?;
+    if !meta.file_type().is_file() {
+        return Err(format!(
+            "Refusing to install an update that is not a regular file: {path:?}"
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid {
+            return Err(format!(
+                "Refusing to install an update owned by uid {}, not the current user (uid {euid})",
+                meta.uid()
+            ));
+        }
+        if meta.mode() & 0o022 != 0 {
+            return Err(format!(
+                "Refusing to install a world/group-writable update: {path:?}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Initiates download of the chosen asset in a background worker thread.
 pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus, String> {
     if is_portable_install() {
@@ -288,17 +483,24 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
         return Ok(get_status());
     }
 
-    let update_dir = std::env::temp_dir().join("kensaku-updates");
-    if let Err(e) = std::fs::create_dir_all(&update_dir) {
+    if let Err(err) = validate_asset_name(asset_name) {
         DOWNLOADING.store(false, Ordering::SeqCst);
-        let mut s = status_slot().lock().unwrap();
-        s.busy = false;
-        s.error = Some(format!("Could not create update directory: {e}"));
-        return Ok(s.clone());
+        return Err(err);
     }
 
-    let final_path = update_dir.join(asset_name);
-    let part_path = update_dir.join(format!("{}.part", asset_name));
+    let staging_dir = match create_staging_dir(&update_staging_root()) {
+        Ok(dir) => dir,
+        Err(e) => {
+            DOWNLOADING.store(false, Ordering::SeqCst);
+            let mut s = status_slot().lock().unwrap();
+            s.busy = false;
+            s.error = Some(format!("Could not create update directory: {e}"));
+            return Ok(s.clone());
+        }
+    };
+
+    let final_path = staging_dir.join(asset_name);
+    let part_path = staging_dir.join(format!("{}.part", asset_name));
 
     // Reset status
     {
@@ -323,7 +525,10 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
         .spawn(move || {
             let res = (|| -> Result<(), String> {
                 let resp = ureq::get(&url)
-                    .set("User-Agent", &format!("kensaku-updater/{}", env!("CARGO_PKG_VERSION")))
+                    .set(
+                        "User-Agent",
+                        &format!("kensaku-updater/{}", env!("CARGO_PKG_VERSION")),
+                    )
                     .timeout(DOWNLOAD_TIMEOUT)
                     .call()
                     .map_err(|e| format!("Download request failed: {e}"))?;
@@ -343,11 +548,14 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
                 loop {
                     use std::io::Read;
                     use std::io::Write;
-                    let n = reader.read(&mut buf).map_err(|e| format!("Read error: {e}"))?;
+                    let n = reader
+                        .read(&mut buf)
+                        .map_err(|e| format!("Read error: {e}"))?;
                     if n == 0 {
                         break;
                     }
-                    file.write_all(&buf[..n]).map_err(|e| format!("Write error: {e}"))?;
+                    file.write_all(&buf[..n])
+                        .map_err(|e| format!("Write error: {e}"))?;
                     downloaded += n as u64;
 
                     let percent = if total_bytes > 0 {
@@ -425,13 +633,13 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
 pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
     let path_str = {
         let s = status_slot().lock().unwrap();
-        s.downloaded_path.clone().ok_or_else(|| "No update has been downloaded yet".to_string())?
+        s.downloaded_path
+            .clone()
+            .ok_or_else(|| "No update has been downloaded yet".to_string())?
     };
 
     let path = PathBuf::from(&path_str);
-    if !path.is_file() {
-        return Err(format!("Downloaded update file does not exist at {:?}", path));
-    }
+    validate_staged_update(&path)?;
 
     #[cfg(windows)]
     {
@@ -443,11 +651,13 @@ pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
             let mut cmd = std::process::Command::new("msiexec");
             cmd.args(["/i", &path_str]);
             cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-            cmd.spawn().map_err(|e| format!("Failed to launch MSI installer: {e}"))?;
+            cmd.spawn()
+                .map_err(|e| format!("Failed to launch MSI installer: {e}"))?;
         } else {
             let mut cmd = std::process::Command::new(&path);
             cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-            cmd.spawn().map_err(|e| format!("Failed to launch installer: {e}"))?;
+            cmd.spawn()
+                .map_err(|e| format!("Failed to launch installer: {e}"))?;
         }
         app.exit(0);
         Ok(())
@@ -467,10 +677,14 @@ pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
     {
         if path_str.ends_with(".AppImage") {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&path).map_err(|e| e.to_string())?.permissions();
+            let mut perms = std::fs::metadata(&path)
+                .map_err(|e| e.to_string())?
+                .permissions();
             perms.set_mode(0o755);
             let _ = std::fs::set_permissions(&path, perms);
-            std::process::Command::new(&path).spawn().map_err(|e| format!("Failed to launch AppImage: {e}"))?;
+            std::process::Command::new(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch AppImage: {e}"))?;
             app.exit(0);
             Ok(())
         } else {
@@ -547,5 +761,93 @@ mod tests {
         } else if cfg!(target_os = "linux") {
             assert!(name.ends_with(".AppImage"));
         }
+    }
+
+    fn temp_test_root(label: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kensaku-updater-test-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn asset_name_must_be_a_plain_file_name() {
+        for ok in ["kensaku_1.0.17_x64-setup.exe", "kensaku.AppImage", "a"] {
+            assert!(validate_asset_name(ok).is_ok(), "{ok} should be accepted");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../evil",
+            "dir/evil",
+            "dir\\evil",
+            "/abs/path",
+            "with\nnewline",
+            "with\0nul",
+        ] {
+            assert!(
+                validate_asset_name(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn staging_dirs_are_unique_and_private() {
+        let root = temp_test_root("unique");
+        let first = create_staging_dir(&root).expect("first staging dir");
+        let second = create_staging_dir(&root).expect("second staging dir");
+
+        assert_ne!(first, second);
+        assert!(first.is_dir());
+        assert!(second.is_dir());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for dir in [&first, &second] {
+                let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode & 0o077, 0, "staging dir {dir:?} must be private");
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn staging_dir_rejects_a_symlink() {
+        let root = temp_test_root("symlink");
+        std::fs::create_dir_all(&root).unwrap();
+        let real = root.join("real");
+        std::fs::create_dir(&real).unwrap();
+
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(
+                ensure_private_staging_dir(&link).is_err(),
+                "a symlinked staging dir must be refused"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn staged_update_must_live_in_the_private_staging_root() {
+        let outside = temp_test_root("outside").join("installer.AppImage");
+        std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+        std::fs::write(&outside, b"not an installer").unwrap();
+        assert!(
+            validate_staged_update(&outside).is_err(),
+            "files outside the staging root must never be executed"
+        );
+        let _ = std::fs::remove_dir_all(outside.parent().unwrap());
     }
 }

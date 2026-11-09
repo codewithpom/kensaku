@@ -9,10 +9,7 @@
 //! write-capable tool (`reindex`) is disabled unless `mcp_allow_reindex` is
 //! explicitly enabled in config.
 
-use super::{
-    AgentSession, HeadlessIndex, agent_read_allowed, compose_query_scoped, now_unix_secs,
-    truncate_chars,
-};
+use super::{AgentSession, HeadlessIndex, compose_query_scoped, now_unix_secs, truncate_chars};
 use crate::config::KensakuConfig;
 use crate::indexer::content::read_text_content;
 use crate::indexer::extract::extract_document;
@@ -590,7 +587,15 @@ fn run_search(
 
     // Agent-scope enforcement (read-only scoping per root): intersect the
     // requested path with the configured roots, or default to their union.
-    let scope_paths = super::agent_scope_paths(&session.scoped_roots(), path.as_deref())
+    // The policy fails closed, and caller-supplied `in:` scopes are rejected
+    // when they fall outside the roots (the parser ORs includes together, so
+    // appending roots alone would let a caller widen the search).
+    let policy = session.policy().map_err(ToolFailure::Execution)?;
+    policy
+        .validate_query_scope(base_query)
+        .map_err(ToolFailure::Invalid)?;
+    let scope_paths = policy
+        .query_scopes(path.as_deref())
         .map_err(ToolFailure::Invalid)?;
     let composed = compose_query_scoped(
         base_query,
@@ -604,6 +609,8 @@ fn run_search(
         .search_page(&composed, page_size, offset)
         .map_err(ToolFailure::Execution)?;
 
+    // Defense in depth: even a scoped query is filtered by the policy before
+    // any path is returned to the model.
     // Ranked results already applied the offset in the dispatcher.
     // Exhaustive mode intentionally ignores the display limit, so slice here.
     let page: Vec<&crate::search::SearchResult> = if response.mode == "exhaustive" {
@@ -612,9 +619,14 @@ fn run_search(
             .iter()
             .skip(offset)
             .take(page_size)
+            .filter(|result| policy.path_allowed(&result.path))
             .collect()
     } else {
-        response.results.iter().collect()
+        response
+            .results
+            .iter()
+            .filter(|result| policy.path_allowed(&result.path))
+            .collect()
     };
 
     let paths: Vec<String> = page.iter().map(|result| result.path.clone()).collect();
@@ -700,7 +712,12 @@ fn run_search_keyset(
     let ext = optional_string(args, "ext")?;
     let modified_after = optional_string(args, "modified_after")?;
 
-    let scope_paths = super::agent_scope_paths(&session.scoped_roots(), path.as_deref())
+    let policy = session.policy().map_err(ToolFailure::Execution)?;
+    policy
+        .validate_query_scope(base_query)
+        .map_err(ToolFailure::Invalid)?;
+    let scope_paths = policy
+        .query_scopes(path.as_deref())
         .map_err(ToolFailure::Invalid)?;
     let composed = compose_query_scoped(
         base_query,
@@ -710,9 +727,12 @@ fn run_search_keyset(
         true,
     );
 
-    let response = session
+    let mut response = session
         .search_page_after(&composed, page_size, start_after)
         .map_err(ToolFailure::Execution)?;
+    response
+        .results
+        .retain(|result| policy.path_allowed(&result.path));
 
     let paths: Vec<String> = response.results.iter().map(|r| r.path.clone()).collect();
     let snippets = snippet_query
@@ -792,14 +812,21 @@ fn tool_read_snippet(session: &AgentSession<'_>, args: &Value) -> Result<Value, 
         .ok_or_else(|| ToolFailure::Invalid("Invalid params: 'path' is required".to_string()))?;
 
     // Scope enforcement applies to direct reads too, and secret-bearing files
-    // stay unreadable even when the whole tree is in scope.
-    if !agent_read_allowed(
-        &session.scoped_roots(),
-        &session.excluded_extensions(),
-        path,
-    ) {
+    // stay unreadable even when the whole tree is in scope. The policy fails
+    // closed, and the path must also be part of the index: a direct read must
+    // never become an arbitrary-file reader for files the indexer skipped.
+    let policy = session.policy().map_err(ToolFailure::Execution)?;
+    if !policy.read_allowed(path) {
         return Err(ToolFailure::Invalid(
             "Invalid params: path is outside the configured agent scope".to_string(),
+        ));
+    }
+    if !session
+        .contains_path(path)
+        .map_err(ToolFailure::Execution)?
+    {
+        return Err(ToolFailure::Invalid(
+            "Invalid params: path is not part of the index".to_string(),
         ));
     }
 
@@ -819,8 +846,11 @@ fn tool_read_snippet(session: &AgentSession<'_>, args: &Value) -> Result<Value, 
             })?,
     };
 
-    if crate::daemon::request("ping", json!({})).is_ok()
-        && let Ok(value) = crate::daemon::request(
+    // In daemon mode the daemon is the single source of truth. Never fall
+    // back to a local read when it rejects the request: that would turn a
+    // policy denial into a file read in this process.
+    if session.is_daemon() {
+        let value = crate::daemon::request(
             "read_snippet",
             json!({
                 "path": path,
@@ -828,7 +858,7 @@ fn tool_read_snippet(session: &AgentSession<'_>, args: &Value) -> Result<Value, 
                 "max_tokens": max_tokens,
             }),
         )
-    {
+        .map_err(ToolFailure::Execution)?;
         return Ok(value);
     }
 
@@ -882,6 +912,23 @@ fn tool_similar_images(session: &AgentSession<'_>, args: &Value) -> Result<Value
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolFailure::Invalid("Invalid params: 'path' is required".to_string()))?;
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+    // The source image is read to compute its embedding, so it is subject to
+    // the same scope and denylist as any other direct read.
+    let policy = session.policy().map_err(ToolFailure::Execution)?;
+    if !policy.read_allowed(path) {
+        return Err(ToolFailure::Invalid(
+            "Invalid params: path is outside the configured agent scope".to_string(),
+        ));
+    }
+    if !session
+        .contains_path(path)
+        .map_err(ToolFailure::Execution)?
+    {
+        return Err(ToolFailure::Invalid(
+            "Invalid params: path is not part of the index".to_string(),
+        ));
+    }
 
     let results = session
         .find_similar_images(path, limit)
@@ -1014,7 +1061,8 @@ pub fn extract_text(path: &Path) -> Option<String> {
         .unwrap_or_default();
 
     const DOCUMENT_EXTENSIONS: &[&str] = &[
-        "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "epub", "odt", "ods", "odp", "rtf", "eml", "msg",
+        "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "epub", "odt", "ods", "odp", "rtf",
+        "eml", "msg",
     ];
 
     if DOCUMENT_EXTENSIONS.contains(&extension.as_str()) {
@@ -1752,5 +1800,57 @@ mod tests {
         // Missing required 'path' parameter returns INVALID_PARAMS
         let call_resp = call(&fixture, "similar_images", json!({}));
         assert_eq!(call_resp["error"]["code"], INVALID_PARAMS);
+    }
+
+    #[test]
+    fn read_snippet_refuses_unindexed_files() {
+        let fixture = fixture("read-unindexed");
+        let outside = fixture.dir.join("outside.txt");
+        fs::write(&outside, "not part of the index").unwrap();
+
+        let response = call(
+            &fixture,
+            "read_snippet",
+            json!({ "path": outside.to_string_lossy() }),
+        );
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        let text = response["error"]["message"].as_str().unwrap();
+        assert!(
+            text.contains("not part of the index"),
+            "unindexed file must be refused, got: {text}"
+        );
+    }
+
+    #[test]
+    fn read_snippet_refuses_indexed_credentials() {
+        let fixture = fixture_with_files("read-env", &[(".env.production", "SECRET=1")]);
+        let path = fixture.dir.join(".env.production");
+
+        let response = call(
+            &fixture,
+            "read_snippet",
+            json!({ "path": path.to_string_lossy() }),
+        );
+        assert_eq!(response["error"]["code"], INVALID_PARAMS);
+        let text = response["error"]["message"].as_str().unwrap();
+        assert!(
+            text.contains("outside the configured agent scope"),
+            "credential file must be refused even when indexed, got: {text}"
+        );
+    }
+
+    #[test]
+    fn read_snippet_returns_indexed_files() {
+        let fixture = fixture("read-indexed");
+        let path = fixture.dir.join("notes.txt");
+
+        let response = call(
+            &fixture,
+            "read_snippet",
+            json!({ "path": path.to_string_lossy(), "max_tokens": 64 }),
+        );
+        assert_eq!(response["result"]["isError"], false);
+        let payload = payload(&response);
+        assert!(payload["text"].as_str().unwrap().contains("alpha"));
     }
 }

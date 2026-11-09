@@ -69,7 +69,11 @@ impl HeadlessIndex {
         // The headless surface must honor the same OCR setting as the GUI.
         crate::indexer::extract::set_ocr_enabled(config.ocr_enabled);
         crate::indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
-        crate::indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes, config.content_csv_head_rows);
+        crate::indexer::extract::set_content_caps(
+            config.content_max_file_size_mb,
+            config.content_max_text_bytes,
+            config.content_csv_head_rows,
+        );
         crate::embed::set_max_semantic_units(config.content_max_semantic_units);
         crate::ocr::set_engine(&config.ocr_engine);
         crate::indexer::extract::set_external_extractors(config.extractors.clone());
@@ -362,30 +366,52 @@ impl AgentSession<'_> {
         matches!(self, Self::Daemon)
     }
 
-    /// Configured agent-scope roots, fetched once per call. Empty means the
-    /// whole index is visible to agents.
-    pub fn scoped_roots(&self) -> Vec<String> {
-        match self {
+    /// Loads the security policy for this session.
+    ///
+    /// This fails closed: a daemon that cannot answer `get_config`, a
+    /// malformed response, or a session with no index all return an error. The
+    /// old accessors turned those failures into empty vectors, and an empty
+    /// root list means "the whole index is visible", so a config hiccup
+    /// silently widened the agent's scope.
+    pub fn policy(&self) -> Result<AgentPolicy, String> {
+        let config = match self {
             Self::Daemon => crate::daemon::request("get_config", json!({}))
-                .ok()
-                .and_then(|value| serde_json::from_value::<KensakuConfig>(value).ok())
-                .map(|config| config.agent_scoped_roots)
-                .unwrap_or_default(),
-            Self::Local(index) => index.config.agent_scoped_roots.clone(),
-            Self::None => Vec::new(),
-        }
+                .map_err(|e| format!("agent policy unavailable: {e}"))
+                .and_then(|value| {
+                    serde_json::from_value::<KensakuConfig>(value)
+                        .map_err(|e| format!("agent policy unavailable: {e}"))
+                })?,
+            Self::Local(index) => index.config.clone(),
+            Self::None => return Err(NO_INDEX_MESSAGE.to_string()),
+        };
+        Ok(AgentPolicy {
+            roots: config.agent_scoped_roots,
+            excluded_extensions: config.excluded_extensions,
+        })
     }
 
-    /// Extensions the index refuses to read content from.
-    pub fn excluded_extensions(&self) -> Vec<String> {
+    /// Whether `path` is present in the index this session serves.
+    ///
+    /// Direct reads are restricted to indexed files: an MCP client must not be
+    /// able to turn `read_snippet` into an arbitrary-file reader by naming a
+    /// path the indexer deliberately skipped (secrets, excluded extensions,
+    /// files outside every watched root).
+    pub fn contains_path(&self, path: &str) -> Result<bool, String> {
+        let requested = Path::new(path);
+        let canonical = std::fs::canonicalize(requested).ok();
         match self {
-            Self::Daemon => crate::daemon::request("get_config", json!({}))
-                .ok()
-                .and_then(|value| serde_json::from_value::<KensakuConfig>(value).ok())
-                .map(|config| config.excluded_extensions)
-                .unwrap_or_default(),
-            Self::Local(index) => index.config.excluded_extensions.clone(),
-            Self::None => Vec::new(),
+            Self::Daemon => {
+                let value = crate::daemon::request("contains_path", json!({ "path": path }))?;
+                value
+                    .get("indexed")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "invalid contains_path response".to_string())
+            }
+            Self::Local(index) => Ok(index.metadata.get(requested).is_some()
+                || canonical
+                    .as_deref()
+                    .is_some_and(|p| index.metadata.get(p).is_some())),
+            Self::None => Err(NO_INDEX_MESSAGE.to_string()),
         }
     }
 
@@ -528,6 +554,64 @@ impl AgentSession<'_> {
     }
 }
 
+/// The security policy an agent session must apply to every read.
+///
+/// Built by [`AgentSession::policy`], which fails closed. Keeping the two
+/// values together makes it hard to apply one (scope) without the other
+/// (excluded extensions).
+#[derive(Debug, Clone, Default)]
+pub struct AgentPolicy {
+    pub roots: Vec<String>,
+    pub excluded_extensions: Vec<String>,
+}
+
+impl AgentPolicy {
+    /// Rejects caller-supplied `in:` scopes that could widen the agent scope.
+    ///
+    /// The parser ORs every include scope together, so a caller query such as
+    /// `in:"/etc"` plus the roots appended by [`compose_query_scoped`] searched
+    /// both `/etc` and the roots. When roots are configured, every caller
+    /// include must be inside one of them. Negated scopes are allowed because
+    /// they only narrow the result set.
+    pub fn validate_query_scope(&self, raw_query: &str) -> Result<(), String> {
+        if self.roots.is_empty() {
+            return Ok(());
+        }
+        for token in crate::query::lexer::tokenize(raw_query) {
+            if let crate::query::lexer::Token::KeyValue {
+                negated: false,
+                key,
+                value,
+                ..
+            } = token
+                && key.eq_ignore_ascii_case("in")
+                && !self
+                    .roots
+                    .iter()
+                    .any(|root| scope_contains(root, value.trim()))
+            {
+                return Err(format!(
+                    "query scope 'in:{value}' is outside the configured agent scope; use the 'path' parameter instead"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn path_allowed(&self, path: &str) -> bool {
+        agent_path_allowed(&self.roots, path)
+    }
+
+    pub fn read_allowed(&self, path: &str) -> bool {
+        agent_read_allowed(&self.roots, &self.excluded_extensions, path)
+    }
+
+    /// Scope paths to compose into a query for an optional requested path.
+    pub fn query_scopes(&self, requested: Option<&str>) -> Result<Vec<String>, String> {
+        agent_scope_paths(&self.roots, requested)
+    }
+}
+
 /// Applies the configured agent-scope roots to an optional requested path.
 ///
 /// - No roots configured: pass the request through unchanged.
@@ -652,10 +736,22 @@ const ALWAYS_DENIED_EXTENSIONS: &[&str] = &[
 ];
 
 /// Filenames that carry credentials regardless of extension.
+///
+/// The list intentionally covers the common credential stores agents have been
+/// tricked into reading. `.env` is matched as a prefix too, so `.env.local`,
+/// `.env.production` and similar variants are covered.
 const ALWAYS_DENIED_NAMES: &[&str] = &[
     ".env",
     ".netrc",
     ".pgpass",
+    ".git-credentials",
+    ".npmrc",
+    ".pypirc",
+    ".htpasswd",
+    ".dockercfg",
+    ".gitconfig",
+    ".kubeconfig",
+    ".my.cnf",
     "credentials",
     "id_rsa",
     "id_dsa",
@@ -663,6 +759,18 @@ const ALWAYS_DENIED_NAMES: &[&str] = &[
     "id_ed25519",
     "known_hosts",
     "secring.gpg",
+    "auth.json",
+];
+
+/// Path components that hold credential stores. A direct read must never
+/// traverse these even when the file name looks harmless.
+const ALWAYS_DENIED_COMPONENTS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".docker",
+    ".kube",
+    ".password-store",
 ];
 
 /// Whether the agent surface may read `path` directly.
@@ -672,6 +780,10 @@ const ALWAYS_DENIED_NAMES: &[&str] = &[
 /// mean "and any file on disk": without this check `read_snippet` on an
 /// absolute path returned the contents of `~/.ssh/id_ed25519` to any connected
 /// MCP client, because a direct read never consults the indexing denylist.
+///
+/// Callers must additionally require that the path is indexed
+/// ([`AgentSession::contains_path`]); this function only answers whether the
+/// name and scope permit a read.
 pub fn agent_read_allowed(roots: &[String], excluded_extensions: &[String], path: &str) -> bool {
     if !agent_path_allowed(roots, path) {
         return false;
@@ -679,7 +791,17 @@ pub fn agent_read_allowed(roots: &[String], excluded_extensions: &[String], path
 
     let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let lower_name = file_name.to_ascii_lowercase();
-    if ALWAYS_DENIED_NAMES.contains(&lower_name.as_str()) {
+    if lower_name == ".env"
+        || lower_name.starts_with(".env.")
+        || ALWAYS_DENIED_NAMES.contains(&lower_name.as_str())
+    {
+        return false;
+    }
+
+    if path.split(['/', '\\']).any(|component| {
+        let lower = component.to_ascii_lowercase();
+        ALWAYS_DENIED_COMPONENTS.contains(&lower.as_str())
+    }) {
         return false;
     }
 
@@ -689,9 +811,11 @@ pub fn agent_read_allowed(roots: &[String], excluded_extensions: &[String], path
         .unwrap_or_default();
     if !extension.is_empty()
         && (ALWAYS_DENIED_EXTENSIONS.contains(&extension)
-            || excluded_extensions
-                .iter()
-                .any(|excluded| excluded.trim_start_matches('.').eq_ignore_ascii_case(extension)))
+            || excluded_extensions.iter().any(|excluded| {
+                excluded
+                    .trim_start_matches('.')
+                    .eq_ignore_ascii_case(extension)
+            }))
     {
         return false;
     }
@@ -884,10 +1008,18 @@ mod scope_tests {
         let excluded: Vec<String> = vec!["db".to_string(), "sqlite".to_string()];
 
         assert!(agent_read_allowed(&roots, &excluded, "/home/u/notes.txt"));
-        assert!(agent_read_allowed(&roots, &excluded, "/home/u/project/README.md"));
+        assert!(agent_read_allowed(
+            &roots,
+            &excluded,
+            "/home/u/project/README.md"
+        ));
 
         // Known credential filenames.
-        assert!(!agent_read_allowed(&roots, &excluded, "/home/u/.ssh/id_ed25519"));
+        assert!(!agent_read_allowed(
+            &roots,
+            &excluded,
+            "/home/u/.ssh/id_ed25519"
+        ));
         assert!(!agent_read_allowed(&roots, &excluded, "/home/u/id_rsa"));
         assert!(!agent_read_allowed(&roots, &excluded, "/srv/app/.env"));
 
@@ -963,7 +1095,11 @@ mod scope_tests {
         // The normalization preserves POSIX roots, so with no configured
         // roots the request passes through lexically unchanged. Windows
         // renders the POSIX root with the native separator.
-        let expected = if cfg!(windows) { r"\tmp\demo" } else { "/tmp/demo" };
+        let expected = if cfg!(windows) {
+            r"\tmp\demo"
+        } else {
+            "/tmp/demo"
+        };
         assert_eq!(
             agent_scope_paths(&[], Some("/tmp/demo")).unwrap(),
             vec![expected.to_string()]
@@ -981,6 +1117,70 @@ mod scope_tests {
             ("/", "../a")
         };
         assert_eq!(lexical_scope_path("/a/../..").to_string_lossy(), above_root);
-        assert_eq!(lexical_scope_path("../a").to_string_lossy(), relative_escape);
+        assert_eq!(
+            lexical_scope_path("../a").to_string_lossy(),
+            relative_escape
+        );
+    }
+
+    #[test]
+    fn direct_reads_refuse_credential_variants() {
+        let roots: Vec<String> = Vec::new();
+        let excluded: Vec<String> = Vec::new();
+
+        for path in [
+            "/srv/app/.env.production",
+            "/srv/app/.env.local",
+            "/home/u/.git-credentials",
+            "/home/u/.npmrc",
+            "/home/u/.aws/credentials",
+            "/home/u/.ssh/config",
+            "/home/u/.docker/config.json",
+            "/home/u/.kube/config",
+            "/home/u/.gnupg/private-keys-v1.d/key",
+        ] {
+            assert!(
+                !agent_read_allowed(&roots, &excluded, path),
+                "{path} must not be readable by an agent"
+            );
+        }
+    }
+
+    #[test]
+    fn query_scope_rejects_union_broadening() {
+        let root = temp_root("query-scope");
+        let root_string = root.to_string_lossy().into_owned();
+        let policy = AgentPolicy {
+            roots: vec![root_string.clone()],
+            excluded_extensions: Vec::new(),
+        };
+
+        // With no roots the whole index is visible, so an `in:` scope is not
+        // a privilege escalation.
+        assert!(
+            AgentPolicy::default()
+                .validate_query_scope("in:\"/etc\" x")
+                .is_ok()
+        );
+
+        // An include inside the root is allowed.
+        let inside = root.join("sub").to_string_lossy().into_owned();
+        assert!(
+            policy
+                .validate_query_scope(&format!("in:\"{inside}\" x"))
+                .is_ok()
+        );
+
+        // An include outside the root is rejected; appending the roots to the
+        // caller query would otherwise OR both scopes together.
+        assert!(policy.validate_query_scope("in:\"/etc\" x").is_err());
+        assert!(
+            policy
+                .validate_query_scope(&format!("in:\"{root_string}\" in:\"/etc\""))
+                .is_err()
+        );
+
+        // Negated scopes only narrow, so they stay allowed.
+        assert!(policy.validate_query_scope("x -in:\"/etc\"").is_ok());
     }
 }

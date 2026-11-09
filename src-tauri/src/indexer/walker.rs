@@ -213,6 +213,46 @@ pub fn starts_with_any(path: &std::path::Path, prune_roots: &[PathBuf]) -> bool 
     prune_roots.iter().any(|root| path.starts_with(root))
 }
 
+/// Default-deny sensitive names, shared by the crawler and the watcher.
+///
+/// These are skipped even if the user has not added them to exclusions. Hidden
+/// entries (names starting with '.') are also skipped by the walk, which covers
+/// `~/.ssh`, `~/.gnupg`, `~/.aws` and friends; the explicit list keeps the
+/// policy intact when a caller or platform does not skip hidden entries.
+pub const SENSITIVE_NAMES: &[&str] = &[
+    ".ssh",
+    ".gnupg",
+    ".gpg",
+    ".aws",
+    ".azure",
+    ".kube",
+    ".docker",
+    ".password-store",
+    "1password",
+    "bitwarden",
+    "keepass",
+    "keepassxc",
+];
+
+/// Whether `name` is a sensitive file or directory name.
+///
+/// `.env` is matched as a prefix so `.env.local`, `.env.production` and any
+/// future variant are covered without extending the list.
+pub fn is_sensitive_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == ".env" || lower.starts_with(".env.") || SENSITIVE_NAMES.contains(&lower.as_str())
+}
+
+/// True when `path` or any of its components is a sensitive name.
+pub fn is_sensitive_path(path: &std::path::Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(is_sensitive_name)
+    })
+}
+
 /// Walks `dirs` and returns file entries.
 ///
 /// When `include_ignored` is false (the default), `.gitignore` /
@@ -229,29 +269,6 @@ pub fn walk_directories(
     let mut ignore_dirs: Vec<PathBuf> = Vec::new();
     let excluded_set: HashSet<String> = excluded_dirs.iter().map(|s| s.to_lowercase()).collect();
 
-    // Default-deny sensitive paths. These are skipped even if the user has not
-    // added them to exclusions. Hidden entries (names starting with '.') are
-    // already skipped above, which covers ~/.ssh, ~/.gnupg, ~/.aws, etc.
-    const SENSITIVE_NAMES: &[&str] = &[
-        ".ssh",
-        ".gnupg",
-        ".gpg",
-        ".aws",
-        ".azure",
-        ".kube",
-        ".docker",
-        ".password-store",
-        "1password",
-        "bitwarden",
-        "keepass",
-        "keepassxc",
-        ".env",
-        ".env.local",
-        ".env.production",
-        ".env.development",
-    ];
-    let sensitive_set: HashSet<String> = SENSITIVE_NAMES.iter().map(|s| s.to_string()).collect();
-
     for root in dirs {
         if !root.exists() {
             continue;
@@ -262,7 +279,6 @@ pub fn walk_directories(
             .skip_hidden(true)
             .process_read_dir({
                 let excluded_set = excluded_set.clone();
-                let sensitive_set = sensitive_set.clone();
                 let prune_roots = prunes_for_roots(dirs);
                 move |_depth, _path, _read_dir_state, children| {
                     children.retain(|dir_entry_result| {
@@ -281,7 +297,7 @@ pub fn walk_directories(
                             if excluded_set.contains(&name) {
                                 return false;
                             }
-                            if sensitive_set.contains(&name) {
+                            if is_sensitive_name(&name) {
                                 return false;
                             }
                         }
@@ -410,10 +426,7 @@ mod tests {
         assert!(!starts_with_any(&home.join("Documents/a.txt"), &prunes));
         // iCloud Drive picked on purpose: it is indexed.
         let icloud = library.join("Mobile Documents/com~apple~CloudDocs");
-        let prunes = prunes_for_roots_with(
-            &[home.clone(), icloud.clone()],
-            vec![library.clone()],
-        );
+        let prunes = prunes_for_roots_with(&[home.clone(), icloud.clone()], vec![library.clone()]);
         assert!(!starts_with_any(&icloud.join("notes.txt"), &prunes));
     }
 

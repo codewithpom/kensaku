@@ -1,9 +1,60 @@
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::Path;
 use zip::ZipArchive;
+
+/// Maximum uncompressed XML bytes read from one archive member.
+///
+/// A small zip can expand to gigabytes. The output and event budgets bound the
+/// text we keep and the parser work, but a single giant text node would still
+/// be buffered whole by quick-xml. Truncating the reader at this limit turns a
+/// decompression bomb into a normal truncated document.
+const MAX_XML_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Hard cap on XML events processed for one archive.
+///
+/// The output limit alone does not stop a crafted document: a file can contain
+/// millions of empty or zero-length elements that never add a byte to the
+/// output but still cost parser time. This is the budget that bounds the work.
+const MAX_XML_EVENTS: usize = 2_000_000;
+
+/// Maximum shared strings retained while reading an XLSX.
+///
+/// Only the first 2,000 are ever emitted; the rest are kept in memory only
+/// because cells reference them by index. A crafted workbook can declare
+/// millions, so both the count and the total bytes are capped.
+const MAX_SHARED_STRINGS: usize = 20_000;
+const MAX_SHARED_STRING_BYTES: usize = 8 * 1024 * 1024;
+
+/// Returns true when the event budget is exhausted.
+fn budget_exhausted(events: usize) -> bool {
+    events >= MAX_XML_EVENTS
+}
+
+/// Appends `text` to `out` without letting it grow past `limit` bytes.
+///
+/// quick-xml hands back a whole text node in one event, so checking the budget
+/// before `push_str` is not enough: a single 300 KB node overshot a 100-byte
+/// limit. Truncation stops on a UTF-8 boundary.
+fn push_bounded(out: &mut String, text: &str, limit: usize) -> bool {
+    if out.len() >= limit {
+        return true;
+    }
+    let remaining = limit - out.len();
+    if text.len() <= remaining {
+        out.push_str(text);
+        false
+    } else {
+        let mut end = remaining;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&text[..end]);
+        true
+    }
+}
 
 /// Decodes an XML reference event (`&amp;`, `&#233;`, ...) to text.
 ///
@@ -22,20 +73,27 @@ pub fn extract_docx(path: &Path, max_bytes: usize) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut archive = ZipArchive::new(BufReader::new(file)).ok()?;
 
-    let mut doc_file = archive.by_name("word/document.xml").ok()?;
+    let doc_file = archive.by_name("word/document.xml").ok()?;
     // Stream XML directly instead of buffering entire document in memory
-    let mut reader = Reader::from_reader(std::io::BufReader::new(&mut doc_file));
+    let mut reader =
+        Reader::from_reader(std::io::BufReader::new(doc_file.take(MAX_XML_INPUT_BYTES)));
     reader.config_mut().trim_text(true);
 
     let mut text_out = String::new();
     let mut in_text = false;
     let mut buf = Vec::new();
+    let mut events = 0usize;
 
     loop {
         if text_out.len() >= max_bytes {
             text_out.push_str("\n... [content truncated at limit]");
             break;
         }
+        if budget_exhausted(events) {
+            text_out.push_str("\n... [content truncated at limit]");
+            break;
+        }
+        events += 1;
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
@@ -55,13 +113,13 @@ pub fn extract_docx(path: &Path, max_bytes: usize) -> Option<String> {
                 if in_text {
                     // XML entities in raw text (&amp; &#233;) must be decoded
                     // or "R&D report" can never match a search for "R&D".
-                    text_out.push_str(e.as_ref());
+                    push_bounded(&mut text_out, e.as_ref(), max_bytes);
                     text_out.push(' ');
                 }
             }
             Ok(Event::GeneralRef(ref r)) => {
                 if in_text {
-                    text_out.push_str(&decoded_ref(r));
+                    push_bounded(&mut text_out, &decoded_ref(r), max_bytes);
                     text_out.push(' ');
                 }
             }
@@ -88,6 +146,9 @@ pub fn extract_pptx(path: &Path, max_bytes: usize) -> Option<String> {
         .file_names()
         .filter_map(|r| r.ok())
         .filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml"))
+        // A crafted archive can declare an enormous number of slides; only the
+        // first thousand are ever useful and this keeps the vector bounded.
+        .take(1_000)
         .map(|s| s.to_string())
         .collect();
 
@@ -100,19 +161,22 @@ pub fn extract_pptx(path: &Path, max_bytes: usize) -> Option<String> {
     });
 
     let mut text_out = String::new();
+    let mut events = 0usize;
 
     for (idx, slide_name) in slide_names.iter().enumerate() {
-        if text_out.len() >= max_bytes {
+        if text_out.len() >= max_bytes || budget_exhausted(events) {
             text_out.push_str("\n... [content truncated at limit]");
             break;
         }
 
-        let mut slide_file = match archive.by_name(slide_name) {
+        let slide_file = match archive.by_name(slide_name) {
             Ok(f) => f,
             Err(_) => continue,
         };
 
-        let mut reader = Reader::from_reader(std::io::BufReader::new(&mut slide_file));
+        let mut reader = Reader::from_reader(std::io::BufReader::new(
+            slide_file.take(MAX_XML_INPUT_BYTES),
+        ));
         reader.config_mut().trim_text(true);
 
         let mut slide_text = String::new();
@@ -120,6 +184,10 @@ pub fn extract_pptx(path: &Path, max_bytes: usize) -> Option<String> {
         let mut buf = Vec::new();
 
         loop {
+            if slide_text.len() >= max_bytes || budget_exhausted(events) {
+                break;
+            }
+            events += 1;
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == "a:t" {
@@ -136,7 +204,7 @@ pub fn extract_pptx(path: &Path, max_bytes: usize) -> Option<String> {
                 }
                 Ok(Event::Text(ref e)) => {
                     if in_text {
-                        slide_text.push_str(e.as_ref());
+                        push_bounded(&mut slide_text, e.as_ref(), max_bytes);
                         slide_text.push(' ');
                     }
                 }
@@ -171,14 +239,21 @@ pub fn extract_xlsx(path: &Path, max_bytes: usize) -> Option<String> {
 
     // 1. Read shared strings if present
     let mut shared_strings = Vec::new();
-    if let Ok(mut ss_file) = archive.by_name("xl/sharedStrings.xml") {
-        let mut reader = Reader::from_reader(std::io::BufReader::new(&mut ss_file));
+    if let Ok(ss_file) = archive.by_name("xl/sharedStrings.xml") {
+        let mut reader =
+            Reader::from_reader(std::io::BufReader::new(ss_file.take(MAX_XML_INPUT_BYTES)));
         reader.config_mut().trim_text(true);
         {
             let mut in_t = false;
             let mut current = String::new();
             let mut buf = Vec::new();
+            let mut events = 0usize;
+            let mut shared_bytes = 0usize;
             loop {
+                if budget_exhausted(events) {
+                    break;
+                }
+                events += 1;
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) => {
                         if e.name().as_ref() == "t" {
@@ -190,17 +265,24 @@ pub fn extract_xlsx(path: &Path, max_bytes: usize) -> Option<String> {
                             // One shared string per <t>: quick-xml 0.42
                             // splits entity references into their own
                             // events, so text must span them.
-                            shared_strings.push(std::mem::take(&mut current));
+                            if shared_strings.len() < MAX_SHARED_STRINGS
+                                && shared_bytes < MAX_SHARED_STRING_BYTES
+                            {
+                                shared_bytes = shared_bytes.saturating_add(current.len());
+                                shared_strings.push(std::mem::take(&mut current));
+                            } else {
+                                current.clear();
+                            }
                             in_t = false;
                         }
                     }
                     Ok(Event::Text(ref e)) => {
-                        if in_t {
+                        if in_t && current.len() < MAX_SHARED_STRING_BYTES {
                             current.push_str(e.as_ref());
                         }
                     }
                     Ok(Event::GeneralRef(ref r)) => {
-                        if in_t {
+                        if in_t && current.len() < MAX_SHARED_STRING_BYTES {
                             current.push_str(&decoded_ref(r));
                         }
                     }
@@ -230,33 +312,37 @@ pub fn extract_xlsx(path: &Path, max_bytes: usize) -> Option<String> {
             if text_out.len() >= max_bytes {
                 break;
             }
-            text_out.push_str(s);
+            push_bounded(&mut text_out, s, max_bytes);
             text_out.push('\n');
         }
     }
 
     // Also scan worksheet cells for inline strings or numbers
+    let mut events = 0usize;
     for sheet_name in sheet_names.iter().take(10) {
-        if text_out.len() >= max_bytes {
+        if text_out.len() >= max_bytes || budget_exhausted(events) {
             text_out.push_str("\n... [content truncated at limit]");
             break;
         }
 
-        let mut sheet_file = match archive.by_name(sheet_name) {
+        let sheet_file = match archive.by_name(sheet_name) {
             Ok(f) => f,
             Err(_) => continue,
         };
 
-        let mut reader = Reader::from_reader(std::io::BufReader::new(&mut sheet_file));
+        let mut reader = Reader::from_reader(std::io::BufReader::new(
+            sheet_file.take(MAX_XML_INPUT_BYTES),
+        ));
         reader.config_mut().trim_text(true);
 
         let mut in_v = false;
         let mut buf = Vec::new();
 
         loop {
-            if text_out.len() >= max_bytes {
+            if text_out.len() >= max_bytes || budget_exhausted(events) {
                 break;
             }
+            events += 1;
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     let name = e.name();
@@ -274,13 +360,13 @@ pub fn extract_xlsx(path: &Path, max_bytes: usize) -> Option<String> {
                 }
                 Ok(Event::Text(ref e)) => {
                     if in_v {
-                        text_out.push_str(e.as_ref());
+                        push_bounded(&mut text_out, e.as_ref(), max_bytes);
                         text_out.push(' ');
                     }
                 }
                 Ok(Event::GeneralRef(ref r)) => {
                     if in_v {
-                        text_out.push_str(&decoded_ref(r));
+                        push_bounded(&mut text_out, &decoded_ref(r), max_bytes);
                         text_out.push(' ');
                     }
                 }
@@ -313,33 +399,36 @@ pub fn extract_epub(path: &Path, max_bytes: usize) -> Option<String> {
     chapter_files.sort();
 
     let mut text_out = String::new();
+    let mut events = 0usize;
 
     for chap_name in chapter_files.iter().take(50) {
-        if text_out.len() >= max_bytes {
+        if text_out.len() >= max_bytes || budget_exhausted(events) {
             text_out.push_str("\n... [content truncated at limit]");
             break;
         }
 
-        let mut chap_file = match archive.by_name(chap_name) {
+        let chap_file = match archive.by_name(chap_name) {
             Ok(f) => f,
             Err(_) => continue,
         };
 
-        let mut reader = Reader::from_reader(std::io::BufReader::new(&mut chap_file));
+        let mut reader =
+            Reader::from_reader(std::io::BufReader::new(chap_file.take(MAX_XML_INPUT_BYTES)));
         reader.config_mut().trim_text(true);
 
         let mut buf = Vec::new();
         loop {
-            if text_out.len() >= max_bytes {
+            if text_out.len() >= max_bytes || budget_exhausted(events) {
                 break;
             }
+            events += 1;
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Text(ref e)) => {
-                    text_out.push_str(e.as_ref());
+                    push_bounded(&mut text_out, e.as_ref(), max_bytes);
                     text_out.push(' ');
                 }
                 Ok(Event::GeneralRef(ref r)) => {
-                    text_out.push_str(&decoded_ref(r));
+                    push_bounded(&mut text_out, &decoded_ref(r), max_bytes);
                     text_out.push(' ');
                 }
                 Ok(Event::End(ref e)) => {
@@ -369,27 +458,31 @@ pub fn extract_odt(path: &Path, max_bytes: usize) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut archive = ZipArchive::new(BufReader::new(file)).ok()?;
 
-    let mut content_file = archive.by_name("content.xml").ok()?;
+    let content_file = archive.by_name("content.xml").ok()?;
 
-    let mut reader = Reader::from_reader(std::io::BufReader::new(&mut content_file));
+    let mut reader = Reader::from_reader(std::io::BufReader::new(
+        content_file.take(MAX_XML_INPUT_BYTES),
+    ));
     reader.config_mut().trim_text(true);
 
     let mut text_out = String::new();
     let mut buf = Vec::new();
+    let mut events = 0usize;
 
     loop {
-        if text_out.len() >= max_bytes {
+        if text_out.len() >= max_bytes || budget_exhausted(events) {
             text_out.push_str("\n... [content truncated at limit]");
             break;
         }
+        events += 1;
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Text(ref e)) => {
-                text_out.push_str(e.as_ref());
+                push_bounded(&mut text_out, e.as_ref(), max_bytes);
                 text_out.push(' ');
             }
             Ok(Event::GeneralRef(ref r)) => {
-                text_out.push_str(&decoded_ref(r));
+                push_bounded(&mut text_out, &decoded_ref(r), max_bytes);
                 text_out.push(' ');
             }
             Ok(Event::End(ref e)) => {
@@ -712,5 +805,41 @@ mod tests {
     fn odt_without_content_xml_is_none() {
         let fx = zip_fixture("odt-missing", &[("styles.xml", "<styles/>")]);
         assert!(extract_odt(&fx.0, 10_000).is_none());
+    }
+
+    #[test]
+    fn pptx_slide_buffer_is_bounded() {
+        // A single slide with a huge text run used to be buffered whole before
+        // the total limit was checked. The per-slide cap must keep it bounded.
+        let repeated = "slide ".repeat(50_000);
+        let body = format!("<a:p><a:t>{repeated}</a:t></a:p>");
+        let fx = zip_fixture("pptx-budget", &[("ppt/slides/slide1.xml", &body)]);
+        let text = extract_pptx(&fx.0, 100).expect("pptx extracts");
+        assert!(
+            text.len() < 400,
+            "per-slide buffer must respect max_bytes, got {} bytes",
+            text.len()
+        );
+    }
+
+    #[test]
+    fn xlsx_shared_string_output_is_bounded() {
+        // A huge shared string must not be copied into the output past the
+        // budget, and must not make the extractor allocate the whole sheet.
+        let repeated = "x".repeat(1_000_000);
+        let body = format!("<sst><si><t>{repeated}</t></si></sst>");
+        let fx = zip_fixture("xlsx-budget", &[("xl/sharedStrings.xml", &body)]);
+        let text = extract_xlsx(&fx.0, 100).expect("xlsx extracts");
+        assert!(
+            text.len() < 400,
+            "shared-string output must respect max_bytes, got {} bytes",
+            text.len()
+        );
+    }
+
+    #[test]
+    fn event_budget_stops_at_the_cap() {
+        assert!(!budget_exhausted(MAX_XML_EVENTS - 1));
+        assert!(budget_exhausted(MAX_XML_EVENTS));
     }
 }
