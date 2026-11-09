@@ -56,7 +56,14 @@ pub fn ocr_enabled() -> bool {
 static CONTENT_MAX_FILE_SIZE_BYTES: AtomicU64 = AtomicU64::new(20 * 1024 * 1024);
 static CONTENT_MAX_TEXT_BYTES: AtomicUsize = AtomicUsize::new(1_000_000);
 
-pub fn set_content_caps(max_file_size_mb: u64, max_text_bytes: usize) {
+static CSV_HEAD_ROWS: AtomicUsize = AtomicUsize::new(200);
+
+pub fn csv_head_rows() -> usize {
+    CSV_HEAD_ROWS.load(Ordering::SeqCst)
+}
+
+pub fn set_content_caps(max_file_size_mb: u64, max_text_bytes: usize, csv_head_rows: usize) {
+    CSV_HEAD_ROWS.store(csv_head_rows.max(1), Ordering::SeqCst);
     CONTENT_MAX_FILE_SIZE_BYTES.store(
         max_file_size_mb.saturating_mul(1024 * 1024),
         Ordering::SeqCst,
@@ -730,7 +737,7 @@ fn extract_document_inner(
         }
         DocumentFormat::Delimited => {
             // Rows are kept whole, so this arm never uses the head/tail split below.
-            let text = delimited::extract_delimited(path, capped_bytes)?;
+            let text = delimited::extract_delimited(path, capped_bytes, csv_head_rows())?;
             Some(DocumentExtract {
                 text,
                 page_count: None,

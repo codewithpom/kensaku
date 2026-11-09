@@ -376,7 +376,7 @@ pub fn run() {
     indexer::extract::set_ocr_enabled(config.ocr_enabled);
     indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
     indexer::extract::set_ocr_languages(config.ocr_languages.clone());
-    indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes);
+    indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes, config.content_csv_head_rows);
     crate::embed::set_max_semantic_units(config.content_max_semantic_units);
     ocr::set_engine(&config.ocr_engine);
 
