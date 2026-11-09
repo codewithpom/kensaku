@@ -31,6 +31,16 @@ impl MetadataDb {
         Ok(())
     }
 
+    /// Makes the batch so far durable and starts the next one. A crawl that is
+    /// killed mid-way (app closed, crash) otherwise rolls back every row it
+    /// wrote, so the next launch sees the whole tree as new and re-reads it.
+    pub fn commit_and_reopen(&self) -> Result<(), String> {
+        self.commit_transaction()?;
+        // Keeps the WAL from growing for the whole crawl; PASSIVE never blocks.
+        self.checkpoint_passive();
+        self.begin_transaction()
+    }
+
     pub fn open() -> Result<Self, String> {
         let db_dir = KensakuConfig::config_dir();
         std::fs::create_dir_all(&db_dir)
@@ -1621,6 +1631,33 @@ mod tests {
             .into_iter()
             .map(|entry| entry.path)
             .collect()
+    }
+
+    #[test]
+    fn commit_and_reopen_makes_rows_durable_for_a_killed_crawl() {
+        let temp = TempDb::new("commit-reopen");
+        let db = temp.db();
+        db.begin_transaction().unwrap();
+        db.upsert(&entry(Path::new("/a/one.txt"), false)).unwrap();
+        db.commit_and_reopen().unwrap();
+        db.upsert(&entry(Path::new("/a/two.txt"), false)).unwrap();
+
+        // A second connection sees only what was committed, as a restarted
+        // app would after the crawl was killed.
+        let other = rusqlite::Connection::open_with_flags(
+            temp.dir.join("metadata.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let seen: Vec<String> = other
+            .prepare("SELECT path FROM nodes")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(seen.len(), 1, "only the committed row is visible: {seen:?}");
+        assert!(seen[0].ends_with("one.txt"));
     }
 
     #[test]

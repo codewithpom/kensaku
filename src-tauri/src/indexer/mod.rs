@@ -678,7 +678,12 @@ impl IndexerManager {
             crawl_start_unix_ms.store(now_unix_ms(), Ordering::Relaxed);
             watcher_ok.store(false, Ordering::Relaxed);
 
-            {
+            // After the first full scan, walking an unchanged tree is silent:
+            // the banner appears only once there is something to read.
+            let mut quiet = config_arc.read().first_scan_done;
+            if quiet {
+                status.write().paused = false;
+            } else {
                 let mut st = status.write();
                 st.is_indexing = true;
                 st.paused = false;
@@ -723,7 +728,7 @@ impl IndexerManager {
             // Phase 1: Collect all entries (jwalk is already parallel internally).
             let all_entries = walk_directories(&watched_dirs, &excluded_dirs, include_ignored);
             let total_entries = all_entries.len();
-            {
+            if !quiet {
                 let mut st = status.write();
                 st.total_files = total_entries;
                 st.phase = "walking".to_string();
@@ -796,6 +801,10 @@ impl IndexerManager {
                         || crate::indexer::extract::external::handles(&entry.path))
                     && !is_cloud_placeholder_path(&entry.path)
                 {
+                    // Pending until extraction finishes, so a crawl that is
+                    // killed after a mid-crawl commit leaves these files to be
+                    // read next launch instead of looking up to date.
+                    metadata.write().set_content_pending(&entry.path);
                     to_extract.push(ExtractJob {
                         node_id,
                         path: entry.path.clone(),
@@ -809,7 +818,7 @@ impl IndexerManager {
                     });
                 }
 
-                if files_count.is_multiple_of(500) {
+                if !quiet && files_count.is_multiple_of(500) {
                     let mut st = status.write();
                     st.files_indexed = files_count;
                     st.content_indexed = content_count;
@@ -833,8 +842,12 @@ impl IndexerManager {
             // through a bounded channel, so peak memory stays flat and images
             // are OCR'd once instead of twice.
             let extract_total = to_extract.len();
-            {
+            if extract_total > 0 {
+                quiet = false;
+            }
+            if !quiet {
                 let mut st = status.write();
+                st.is_indexing = true;
                 st.phase = "extracting".to_string();
                 st.files_indexed = files_count;
                 st.content_indexed = content_count;
@@ -1092,10 +1105,23 @@ impl IndexerManager {
                         );
                     }
 
+                    // Done reading this file; a retry keeps (re-sets) the flag
+                    // after the loop. Pending images are cleared further down.
+                    if !work.retry && !pending_images.contains(&work.path) {
+                        metadata.write().clear_content_pending(&work.path);
+                    }
+
                     if pending_commits >= 512
                         && let Some(c_index) = c_index
                     {
+                        // Search index first: a crash between the two leaves
+                        // files pending (re-read), never indexed-but-forgotten.
                         let _ = c_index.commit();
+                        if let Some(db) = db_handle.as_ref()
+                            && let Err(e) = db.commit_and_reopen()
+                        {
+                            crate::say_err!("[Kensaku Indexer] mid-crawl commit failed: {e}");
+                        }
                         pending_commits = 0;
                         let mut st = status.write();
                         st.content_indexed = content_count;
@@ -1104,7 +1130,7 @@ impl IndexerManager {
                 }
             });
 
-            {
+            if !quiet {
                 let mut st = status.write();
                 st.extract_done = extract_total;
                 st.content_indexed = content_count;
