@@ -5,8 +5,8 @@ use crate::indexer::content::{
 use crate::indexer::extract::image as image_util;
 use crate::indexer::metadata::MetadataStore;
 use crate::indexer::walker::{
-    FileEntry, file_identity, is_cloud_placeholder, is_cloud_placeholder_path, prunes_for_roots,
-    starts_with_any, walk_directories,
+    FileEntry, file_identity, is_cloud_placeholder, is_cloud_placeholder_path, is_sensitive_path,
+    prunes_for_roots, starts_with_any, walk_directories,
 };
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -431,7 +431,11 @@ fn rescan_watched_dirs(
     content_index: &Arc<RwLock<Option<ContentIndex>>>,
 ) -> usize {
     let entries = walk_directories(watched_dirs, &cfg.excluded_dirs, cfg.include_ignored);
-    let seen: HashSet<PathBuf> = entries.iter().map(|entry| entry.path.clone()).collect();
+    let seen: HashSet<PathBuf> = entries
+        .iter()
+        .filter(|entry| !is_path_excluded(&entry.path, cfg))
+        .map(|entry| entry.path.clone())
+        .collect();
 
     let mut changed = 0;
     for entry in &entries {
@@ -499,6 +503,16 @@ fn is_path_excluded(path: &Path, cfg: &KensakuConfig) -> bool {
     if crate::indexer::ignore::is_active_ignored(path, path.is_dir()) {
         return true;
     }
+    // The crawl drops excluded extensions and sensitive names before adding
+    // anything. The watcher used to skip both checks, so saving an excluded
+    // or secret-bearing file put it straight back into the index until the
+    // next full crawl.
+    if !path.is_dir() && cfg.is_extension_excluded(path) {
+        return true;
+    }
+    if is_sensitive_path(path) {
+        return true;
+    }
     path.components().any(|component| {
         component
             .as_os_str()
@@ -530,7 +544,6 @@ fn handle_event(
                 let old_path = &event.paths[0];
                 let new_path = &event.paths[1];
 
-                let old_excluded = is_path_excluded(old_path, cfg);
                 let new_excluded = is_path_excluded(new_path, cfg);
 
                 if new_path.is_dir() {
@@ -540,16 +553,19 @@ fn handle_event(
                     if !new_excluded {
                         handle_directory_rename(old_path, new_path, cfg, metadata, content_index);
                         changes += 1;
-                    } else if !old_excluded {
+                    } else {
                         // Moved into an excluded location: drop the subtree.
+                        // Removal runs even when the old path is excluded too,
+                        // so tightening the policy cleans up stale rows.
                         handle_path_remove(old_path, metadata, content_index);
                         changes += 1;
                     }
                 } else {
-                    if !old_excluded {
-                        handle_path_remove(old_path, metadata, content_index);
-                        changes += 1;
-                    }
+                    // Drop the old row unconditionally: an excluded old path
+                    // may still have stale metadata from before the policy
+                    // changed.
+                    handle_path_remove(old_path, metadata, content_index);
+                    changes += 1;
                     if !new_excluded {
                         pending.note(new_path.clone(), now);
                         changes += 1;
@@ -559,11 +575,11 @@ fn handle_event(
         }
         EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
             // Removes are safe during a pause: they only drop stale rows.
+            // Apply them even for excluded paths so a tightened policy can
+            // clean up rows written before the change.
             for path in &event.paths {
-                if !is_path_excluded(path, cfg) {
-                    handle_path_remove(path, metadata, content_index);
-                    changes += 1;
-                }
+                handle_path_remove(path, metadata, content_index);
+                changes += 1;
             }
         }
         EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
@@ -577,23 +593,20 @@ fn handle_event(
         EventKind::Modify(ModifyKind::Name(_)) => {
             // Rename direction unknown: reconcile using the current filesystem state.
             for path in &event.paths {
-                if is_path_excluded(path, cfg) {
-                    continue;
-                }
-                if path.exists() {
-                    pending.note(path.clone(), now);
-                } else {
+                if !path.exists() || is_path_excluded(path, cfg) {
                     handle_path_remove(path, metadata, content_index);
+                } else {
+                    pending.note(path.clone(), now);
                 }
                 changes += 1;
             }
         }
         EventKind::Remove(_) => {
+            // Always remove, even for excluded paths: that is how a policy
+            // change (or a file that became sensitive) drops stale rows.
             for path in &event.paths {
-                if !is_path_excluded(path, cfg) {
-                    handle_path_remove(path, metadata, content_index);
-                    changes += 1;
-                }
+                handle_path_remove(path, metadata, content_index);
+                changes += 1;
             }
         }
         EventKind::Create(_) | EventKind::Modify(_) => {
@@ -659,6 +672,7 @@ fn handle_directory_rename(
 
     let new_dir = new_path.to_path_buf();
     let excluded_dirs = cfg.excluded_dirs.clone();
+    let excluded_extensions = cfg.excluded_extensions.clone();
     let include_ignored = cfg.include_ignored;
     let metadata = Arc::clone(metadata);
     let content_index = Arc::clone(content_index);
@@ -674,6 +688,19 @@ fn handle_directory_rename(
         let mut pending_commits = 0usize;
 
         for entry in entries {
+            // The crawl drops excluded extensions before touching metadata;
+            // a rename must do the same or moving a folder re-adds them.
+            if !entry.is_dir
+                && entry.extension.is_some_and(|extension| {
+                    excluded_extensions.iter().any(|excluded| {
+                        excluded
+                            .trim_start_matches('.')
+                            .eq_ignore_ascii_case(extension)
+                    })
+                })
+            {
+                continue;
+            }
             let is_indexable = !entry.is_dir
                 && (is_indexable_extension(entry.extension)
                     || is_indexable_file_name(&entry.name)
@@ -842,7 +869,10 @@ fn handle_file_upsert(
         // Match the crawl's configured cap. A hard-coded 100 KB truncated the
         // first save of any larger file, and the content index kept that
         // truncated document until the next full crawl.
-        read_text_content(path, crate::indexer::extract::content_max_text_bytes() as u64)
+        read_text_content(
+            path,
+            crate::indexer::extract::content_max_text_bytes() as u64,
+        )
     } else {
         None
     };
@@ -973,6 +1003,47 @@ mod tests {
         let mut queue = PendingUpserts::default();
         apply_settled(path, pending, now, cfg, metadata, content_index, &mut queue);
         assert!(queue.len() == 0, "old files settle immediately");
+    }
+
+    #[test]
+    fn watcher_refuses_excluded_extensions_and_sensitive_names() {
+        let dir = temp_dir("excluded");
+        let cfg = KensakuConfig {
+            watched_dirs: vec![dir.clone()],
+            excluded_extensions: vec!["secret".to_string()],
+            ..KensakuConfig::default()
+        };
+        let metadata = store(&dir);
+        let content_index = no_content();
+        let mut queue = PendingUpserts::default();
+
+        let excluded_ext = dir.join("notes.secret");
+        let env_file = dir.join(".env.production");
+        let credential_dir = dir.join(".aws");
+        std::fs::create_dir_all(&credential_dir).unwrap();
+        let credential_file = credential_dir.join("credentials");
+        std::fs::write(&excluded_ext, "x").unwrap();
+        std::fs::write(&env_file, "TOKEN=1").unwrap();
+        std::fs::write(&credential_file, "aws_secret_access_key=1").unwrap();
+
+        let now = Instant::now();
+        let changes = handle_event(
+            &event(
+                EventKind::Create(CreateKind::File),
+                &[&excluded_ext, &env_file, &credential_file],
+            ),
+            &cfg,
+            &metadata,
+            &content_index,
+            &mut queue,
+            now,
+        );
+
+        assert_eq!(changes, 0, "excluded files must not be queued");
+        assert_eq!(queue.len(), 0);
+        assert!(is_path_excluded(&excluded_ext, &cfg));
+        assert!(is_path_excluded(&env_file, &cfg));
+        assert!(is_path_excluded(&credential_file, &cfg));
     }
 
     #[test]

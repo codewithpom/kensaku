@@ -250,27 +250,50 @@ pub fn tool_find_symbol(session: &AgentSession<'_>, args: &Value) -> Result<Valu
         .map(|size| size.clamp(1, MAX_PAGE_SIZE as u64) as usize)
         .unwrap_or(DEFAULT_PAGE_SIZE);
 
-    // Scope enforcement matches the other read tools.
-    let roots = session.scoped_roots();
-    if let Some(path) = path
-        && !super::agent_path_allowed(&roots, path)
-    {
-        return Err((
-            "Invalid params: path is outside the configured agent scope".to_string(),
-            true,
-        ));
+    // Scope enforcement matches the other read tools, and the policy fails
+    // closed instead of silently becoming "no roots" on a config error.
+    let policy = session.policy().map_err(|error| (error, false))?;
+    if let Some(path) = path {
+        if !policy.read_allowed(path) {
+            return Err((
+                "Invalid params: path is outside the configured agent scope".to_string(),
+                true,
+            ));
+        }
+        if !session
+            .contains_path(path)
+            .map_err(|error| (error, false))?
+        {
+            return Err((
+                "Invalid params: path is not part of the index".to_string(),
+                true,
+            ));
+        }
     }
 
     // Candidate files: an explicit path, else content-index prefilter.
     let candidate_paths: Vec<String> = if let Some(path) = path {
         vec![path.to_string()]
     } else {
-        let search_query = format!("content:\"{}\"", query);
+        // Without a path this used to run `content:"query"` over the whole
+        // index, ignoring the configured agent scope. Compose the same scoped
+        // query as every other read tool, and escape the symbol name so it
+        // cannot inject query syntax.
+        let escaped = query.replace('\\', "\\\\").replace('"', "\\\"");
+        let scope_paths = policy.query_scopes(None).map_err(|error| (error, true))?;
+        let search_query = super::compose_query_scoped(
+            &format!("content:\"{escaped}\""),
+            &scope_paths,
+            None,
+            None,
+            false,
+        );
         match session.search_page(&search_query, MAX_CANDIDATE_FILES, 0) {
             Ok(response) => response
                 .results
                 .into_iter()
                 .map(|result| result.path)
+                .filter(|path| policy.path_allowed(path))
                 .collect(),
             Err(error) => return Err((error, false)),
         }
@@ -281,6 +304,9 @@ pub fn tool_find_symbol(session: &AgentSession<'_>, args: &Value) -> Result<Valu
     let mut files_parsed = 0usize;
     let needle = query.to_lowercase();
     for candidate in candidate_paths.iter().take(MAX_CANDIDATE_FILES) {
+        if !policy.path_allowed(candidate) {
+            continue;
+        }
         let candidate_path = std::path::Path::new(candidate);
         // Cheap pre-check: the file must mention the symbol at all.
         let extension = candidate_path

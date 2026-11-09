@@ -199,6 +199,19 @@ fn main() {
     }
 }
 
+/// Whether `path` is part of the index the daemon serves.
+///
+/// Checks the exact spelling first, then the canonicalized form so a symlink
+/// or a path with `.`/`..` still resolves to an indexed entry.
+fn is_indexed(manager: &Arc<IndexerManager>, path: &str) -> bool {
+    let requested = Path::new(path);
+    let metadata = manager.metadata.read();
+    metadata.get(requested).is_some()
+        || std::fs::canonicalize(requested)
+            .ok()
+            .is_some_and(|canonical| metadata.get(&canonical).is_some())
+}
+
 fn handle_client(stream: LocalSocketStream, token: &str, manager: &Arc<IndexerManager>) {
     let buf = BufReader::new(&stream);
     let mut writer = &stream;
@@ -395,6 +408,21 @@ fn handle_client(stream: LocalSocketStream, token: &str, manager: &Arc<IndexerMa
                 let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 if path.is_empty() {
                     Err("read_snippet requires a path".to_string())
+                } else if !{
+                    // The daemon is reachable by every local MCP client, so it
+                    // must enforce the same scope/denylist rules as the
+                    // in-process agent path. It used to read any file the
+                    // caller named.
+                    let cfg = manager.config.read();
+                    kensaku_lib::agent::agent_read_allowed(
+                        &cfg.agent_scoped_roots,
+                        &cfg.excluded_extensions,
+                        path,
+                    )
+                } {
+                    Err("read_snippet: path is outside the configured agent scope".to_string())
+                } else if !is_indexed(manager, path) {
+                    Err("read_snippet: path is not part of the index".to_string())
                 } else {
                     let query = params.get("query").and_then(|v| v.as_str());
                     let max_tokens = params
@@ -418,6 +446,14 @@ fn handle_client(stream: LocalSocketStream, token: &str, manager: &Arc<IndexerMa
                         }
                         None => Err(format!("Could not read text from {}", path)),
                     }
+                }
+            }
+            "contains_path" => {
+                let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                if path.is_empty() {
+                    Err("contains_path requires a path".to_string())
+                } else {
+                    Ok(json!({ "indexed": is_indexed(manager, path) }))
                 }
             }
             "index_state" => manager.state_json(),
