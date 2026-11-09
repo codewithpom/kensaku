@@ -6,6 +6,7 @@ import { isThumbImage, useThumbnail } from "../lib/thumbnails";
 import { formatBytes, formatRelativeTime } from "../lib/format";
 import { HoverDetails } from "./HoverDetails";
 import { TypeTile } from "./TypeTile";
+import type { SelectMods } from "../lib/selection";
 
 /* Result card. A 16:10 tile, then name and one meta line below it — the
    same card the home screen's recents use. Images fill the tile edge to
@@ -20,7 +21,7 @@ interface ResultItemProps {
   index: number;
   isSelected: boolean;
   view: ResultView;
-  onSelect: () => void;
+  onSelect: (mods?: SelectMods) => void;
   onOpen: () => void;
   onReveal?: () => void;
   onCopyPath?: () => void;
@@ -44,14 +45,17 @@ export const ResultItem = React.memo<ResultItemProps>(
     return (
       <button
         type="button"
-        onClick={onSelect}
+        onMouseDown={(e) => {
+          if (e.shiftKey) e.preventDefault();
+        }}
+        onClick={(e) => onSelect({ toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
         onDoubleClick={onOpen}
         onMouseEnter={() => setHovered(true)}
         onFocus={() => setHovered(true)}
         onContextMenu={(e) => {
           if (!onContextMenu) return;
           e.preventDefault();
-          onSelect();
+          onSelect({ contextMenu: true });
           onContextMenu(e.clientX, e.clientY);
         }}
         draggable

@@ -1,3 +1,10 @@
+/** How a row was picked: Ctrl or Cmd toggles, Shift extends, a context menu keeps a multi-selection. */
+export interface SelectMods {
+  toggle?: boolean;
+  range?: boolean;
+  contextMenu?: boolean;
+}
+
 /** Returns a copy of `selected` with `path` added, or removed if it was there. */
 export function toggle(selected: ReadonlySet<string>, path: string): Set<string> {
   const next = new Set(selected);
