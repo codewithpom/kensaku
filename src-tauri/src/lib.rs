@@ -484,6 +484,8 @@ pub fn run() {
             commands::set_theme,
             commands::open_file,
             commands::open_folder,
+            commands::copy_files,
+            commands::move_files,
             commands::get_file_preview,
             commands::get_snippets,
             commands::get_thumbnail,
