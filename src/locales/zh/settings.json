@@ -66,7 +66,12 @@
     "language": "语言",
     "auto": "自动（跟随系统）",
     "light": "浅色",
-    "dark": "深色"
+    "dark": "深色",
+    "surface": "表面",
+    "surfaceHint": "霜面与玻璃会在柔和背景上模糊面板。系统要求减少透明度时使用纯色。",
+    "surface_solid": "纯色",
+    "surface_frost": "霜面",
+    "surface_glass": "液态玻璃"
   },
   "window": {
     "title": "窗口",

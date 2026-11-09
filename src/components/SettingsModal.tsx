@@ -30,6 +30,7 @@ import {
   InstallOutcome,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { SURFACES, normalizeSurface, useSurface } from "../hooks/useSurface";
 import { useLanguage } from "../hooks/useLanguage";
 import type { SupportedLanguage } from "../i18n";
 import { useStats } from "../hooks/useStats";
@@ -168,7 +169,7 @@ export function Settings({ onClose, initialSection, onConfigSaved }: SettingsPro
   };
 
   return (
-    <div className="fade-in absolute inset-0 z-40 flex bg-bg">
+    <div className="sheet-bg fade-in absolute inset-0 z-40 flex bg-bg">
       <nav data-tauri-drag-region className="relative z-10 flex w-[200px] shrink-0 flex-col overflow-y-auto px-3 pb-3 pt-5">
         <p data-tauri-drag-region className="t-title px-3 pb-4 text-fg">{t("title")}</p>
         <div className="flex flex-col gap-0.5">
@@ -319,6 +320,7 @@ function GeneralSection({
   const { t } = useTranslation("settings");
   const { t: te } = useTranslation("errors");
   const { theme, setTheme } = useTheme();
+  const { surface, setSurface } = useSurface();
   const { language, setLanguage, supportedLanguages } = useLanguage();
   const [capturing, setCapturing] = useState(false);
 
@@ -412,6 +414,27 @@ function GeneralSection({
               }}
             />
           ))}
+        </div>
+        <div className="flex items-center justify-between border-t border-line px-4 py-3">
+          <div>
+            <div className="text-[13px] text-fg">{t("appearance.surface")}</div>
+            <div className="text-[12px] leading-[18px] text-muted">{t("appearance.surfaceHint")}</div>
+          </div>
+          <select
+            value={surface}
+            onChange={(e) => {
+              const value = normalizeSurface(e.target.value);
+              setSurface(value);
+              /* Keep the settings snapshot in step so a later Save does not
+                 write the old finish back. */
+              setConfig((c) => (c ? { ...c, surface: value } : c));
+            }}
+            className="h-8 rounded-control border border-line bg-surface px-2 text-[13px] text-fg"
+          >
+            {SURFACES.map((value) => (
+              <option key={value} value={value}>{t(`appearance.surface_${value}`)}</option>
+            ))}
+          </select>
         </div>
         <div className="flex items-center justify-between border-t border-line px-4 py-3">
           <div className="text-[13px] text-fg">{t("appearance.language")}</div>
