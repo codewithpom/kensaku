@@ -41,7 +41,12 @@
   "onlyFolders": "只看文件夹",
   "noResultsNothing": "还没有名为 {{query}} 的结果。",
   "settingsTitle": "设置",
-  "toast": { "pathCopied": "已复制路径" },
+  "toast": {
+    "pathCopied": "已复制路径",
+    "copied": "已复制 {{count}} 个文件",
+    "moved": "已移动 {{count}} 个文件",
+    "transferPartial": "完成 {{done}} 个，跳过 {{skipped}} 个，失败 {{failed}} 个"
+  },
   "filters": {
     "type": "类型",
     "ext": "扩展名",
@@ -80,7 +85,10 @@
     "copyName": "复制名称",
     "details": "详情",
     "preview": "预览",
-    "quickLook": "快速预览"
+    "quickLook": "快速预览",
+    "copyTo": "复制 {{count}} 个文件到…",
+    "moveTo": "移动 {{count}} 个文件到…",
+    "clearSelection": "取消选择"
   },
   "empty": {
     "noResults": "无结果",

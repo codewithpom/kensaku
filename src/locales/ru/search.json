@@ -43,7 +43,12 @@
   "onlyFolders": "Только папки",
   "noResultsNothing": "Пока ничего с именем {{query}}.",
   "settingsTitle": "Настройки",
-  "toast": { "pathCopied": "Путь скопирован" },
+  "toast": {
+    "pathCopied": "Путь скопирован",
+    "copied": "Скопировано: {{count}}",
+    "moved": "Перемещено: {{count}}",
+    "transferPartial": "Готово: {{done}}, пропущено: {{skipped}}, ошибок: {{failed}}"
+  },
   "filters": {
     "type": "Тип",
     "ext": "Расширение",
@@ -82,7 +87,10 @@
     "copyName": "Копировать имя",
     "details": "Детали",
     "preview": "Предпросмотр",
-    "quickLook": "Быстрый просмотр"
+    "quickLook": "Быстрый просмотр",
+    "copyTo": "Копировать в папку… ({{count}})",
+    "moveTo": "Переместить в папку… ({{count}})",
+    "clearSelection": "Снять выделение"
   },
   "empty": {
     "noResults": "Ничего не найдено",

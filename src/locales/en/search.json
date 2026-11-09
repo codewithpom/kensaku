@@ -41,7 +41,12 @@
   "onlyFolders": "Nothing but folders",
   "noResultsNothing": "Nothing called {{query}}, yet.",
   "settingsTitle": "Settings",
-  "toast": { "pathCopied": "Path copied" },
+  "toast": {
+    "pathCopied": "Path copied",
+    "copied": "Copied {{count}} files",
+    "moved": "Moved {{count}} files",
+    "transferPartial": "{{done}} done, {{skipped}} skipped, {{failed}} failed"
+  },
   "filters": {
     "type": "Type",
     "ext": "Extension",
@@ -80,7 +85,10 @@
     "copyName": "Copy name",
     "details": "Details",
     "preview": "Preview",
-    "quickLook": "Quick look"
+    "quickLook": "Quick look",
+    "copyTo": "Copy {{count}} files to…",
+    "moveTo": "Move {{count}} files to…",
+    "clearSelection": "Clear selection"
   },
   "empty": {
     "noResults": "No results",
