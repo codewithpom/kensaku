@@ -3,7 +3,7 @@
 All notable changes to Kensaku. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.0.17] — 2026-11-09
 
 ### Added
 - **Dark-mode tray icon on Windows** (#46). The Windows tray icon now has a
@@ -26,6 +26,22 @@ versioning: [SemVer](https://semver.org/).
   does the same. New installs were told to "report this" for behaviour that is
   expected. The crawl report now records how many entries were new, so only
   re-reads of files the index had already seen are flagged.
+
+### Security
+- **Agent scope and direct reads.** The MCP agent surface now fails closed:
+  search scopes outside the configured roots are rejected, every result is
+  filtered by scope, and direct reads apply the credential denylist and an
+  index-membership check. A daemon refusal is no longer silently retried as a
+  local read.
+- **Update staging.** Update downloads are staged in a private per-user
+  directory with unpredictable names, and ownership, permissions and file type
+  are verified before the installer runs.
+- **Watcher exclusions.** The file watcher now honors excluded extensions and
+  sensitive names on create, modify and rename events, and drops stale rows
+  when the policy tightens.
+- **Office extraction budgets.** DOCX, PPTX, XLSX, EPUB and ODT extraction now
+  bound XML events, per-member input, shared strings and per-slide buffers, so
+  a crafted archive cannot exhaust CPU or memory.
 
 ## [1.0.16] — 2026-11-05
 
