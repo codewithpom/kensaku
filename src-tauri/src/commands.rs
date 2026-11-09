@@ -187,41 +187,49 @@ pub async fn search(
         return Ok(resp);
     }
 
-    let indexer = &state.indexer;
-    indexer.query_in_flight.store(true, Ordering::SeqCst);
+    // The query holds several index read locks and does CPU-bound work; run it
+    // on the blocking pool so it cannot stall the async runtime that serves IPC.
+    let indexer = std::sync::Arc::clone(&state.indexer);
+    let offset = offset.unwrap_or(0);
+    let resp = tauri::async_runtime::spawn_blocking(move || {
+        indexer.query_in_flight.store(true, Ordering::SeqCst);
 
-    let metadata = indexer.metadata.read();
-    let content_index = indexer.content_index.read();
-    let unit_store = indexer.unit_store.read();
-    let cfg = indexer.config.read();
-    let max_results = cfg.max_results;
-    let semantic_enabled = cfg.semantic_enabled;
-    let aliases = cfg.alias_pairs();
+        let metadata = indexer.metadata.read();
+        let content_index = indexer.content_index.read();
+        let unit_store = indexer.unit_store.read();
+        let cfg = indexer.config.read();
+        let max_results = cfg.max_results;
+        let semantic_enabled = cfg.semantic_enabled;
+        let aliases = cfg.alias_pairs();
 
-    // The UI asks for snippets separately (`get_snippets`) so the search
-    // itself never touches file contents.
-    let sort = sort
-        .as_deref()
-        .map(crate::search::SortOrder::parse)
-        .unwrap_or_default();
-    let visual_store = indexer.visual_store.read();
-    let resp = SearchDispatcher::search_response_fast_sorted_with_snippets_and_visual(
-        &query,
-        &metadata,
-        &content_index,
-        Some(&unit_store),
-        Some(&visual_store),
-        semantic_enabled,
-        max_results,
-        req_seq,
-        sort,
-        &aliases,
-        offset.unwrap_or(0),
-        false,
-    );
+        // The UI asks for snippets separately (`get_snippets`) so the search
+        // itself never touches file contents.
+        let sort = sort
+            .as_deref()
+            .map(crate::search::SortOrder::parse)
+            .unwrap_or_default();
+        let visual_store = indexer.visual_store.read();
+        let resp = SearchDispatcher::search_response_fast_sorted_with_snippets_and_visual(
+            &query,
+            &metadata,
+            &content_index,
+            Some(&unit_store),
+            Some(&visual_store),
+            semantic_enabled,
+            max_results,
+            req_seq,
+            sort,
+            &aliases,
+            offset,
+            false,
+        );
 
-    indexer.query_in_flight.store(false, Ordering::SeqCst);
-    record_query_latency(started.elapsed().as_micros() as u64);
+        indexer.query_in_flight.store(false, Ordering::SeqCst);
+        record_query_latency(started.elapsed().as_micros() as u64);
+        resp
+    })
+    .await
+    .map_err(|e| format!("search task failed: {e}"))?;
     Ok(resp)
 }
 

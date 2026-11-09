@@ -71,6 +71,7 @@ impl MetadataDb {
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA foreign_keys=ON;
+             PRAGMA busy_timeout=5000;
              PRAGMA mmap_size=268435456;
              PRAGMA journal_size_limit=67108864;
              PRAGMA optimize;
@@ -86,7 +87,7 @@ impl MetadataDb {
                dev INTEGER NOT NULL DEFAULT 0,
                ino INTEGER NOT NULL DEFAULT 0
              );
-             CREATE INDEX IF NOT EXISTS nodes_path ON nodes(path);
+             DROP INDEX IF EXISTS nodes_path; -- UNIQUE(path) already indexes it; a second copy doubles every write
              CREATE TABLE IF NOT EXISTS usage (
                path TEXT PRIMARY KEY,
                opens INTEGER NOT NULL DEFAULT 0,
