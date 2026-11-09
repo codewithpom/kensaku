@@ -540,7 +540,8 @@ pub async fn open_folder(path: String) -> Result<(), String> {
 
 #[derive(Debug, Default, Serialize)]
 pub struct TransferReport {
-    pub done: u32,
+    /// Source paths that were transferred, so the UI can drop them from its list.
+    pub done: Vec<String>,
     pub skipped: u32,
     pub failed: Vec<TransferFailure>,
 }
@@ -601,7 +602,7 @@ fn transfer(paths: &[String], dest: &Path, remove_source: bool) -> Result<Transf
             std::fs::copy(source, &target).map(|_| ())
         };
         match outcome {
-            Ok(()) => report.done += 1,
+            Ok(()) => report.done.push(path.clone()),
             Err(e) => report.failed.push(TransferFailure {
                 path: path.clone(),
                 error: e.to_string(),
@@ -1767,7 +1768,7 @@ mod tests {
         let src = temp_dir_with(&[("a.txt", "new"), ("b", "bee")]);
         let dest = temp_dir_with(&[("a.txt", "old")]);
         let report = transfer(&strings(&[src.join("a.txt"), src.join("b")]), &dest, false).unwrap();
-        assert_eq!((report.done, report.skipped, report.failed.len()), (2, 0, 0));
+        assert_eq!((report.done.len(), report.skipped, report.failed.len()), (2, 0, 0));
         assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "old");
         assert_eq!(std::fs::read_to_string(dest.join("a (1).txt")).unwrap(), "new");
         assert_eq!(std::fs::read_to_string(dest.join("b")).unwrap(), "bee");
@@ -1783,7 +1784,8 @@ mod tests {
         std::fs::create_dir_all(src.join("sub")).unwrap();
         let paths = strings(&[src.join("a.txt"), src.join("sub"), src.join("gone.txt")]);
         let report = transfer(&paths, &dest, true).unwrap();
-        assert_eq!((report.done, report.skipped), (1, 2));
+        assert_eq!((report.done.len(), report.skipped), (1, 2));
+        assert_eq!(report.done, strings(&[src.join("a.txt")]));
         assert!(!src.join("a.txt").exists());
         assert!(dest.join("a.txt").exists());
         let _ = std::fs::remove_dir_all(&src);
@@ -1794,7 +1796,7 @@ mod tests {
     fn move_into_the_same_folder_is_a_no_op() {
         let dir = temp_dir_with(&[("a.txt", "x")]);
         let report = transfer(&strings(&[dir.join("a.txt")]), &dir, true).unwrap();
-        assert_eq!((report.done, report.skipped), (0, 1));
+        assert_eq!((report.done.len(), report.skipped), (0, 1));
         assert!(dir.join("a.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
