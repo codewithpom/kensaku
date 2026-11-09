@@ -471,7 +471,11 @@ pub async fn get_stats(state: State<'_, AppState>) -> Result<serde_json::Value, 
     if let Some(daemon) = state.daemon.as_ref() {
         return daemon.get_stats();
     }
-    stats_for(&state.indexer)
+    // Walks the index directory and queries SQLite; keep it off the async runtime.
+    let indexer = std::sync::Arc::clone(&state.indexer);
+    tauri::async_runtime::spawn_blocking(move || stats_for(&indexer))
+        .await
+        .map_err(|e| format!("stats task failed: {e}"))?
 }
 
 #[tauri::command]

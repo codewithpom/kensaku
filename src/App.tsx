@@ -294,14 +294,34 @@ function App() {
       .then(setIndexingStatus)
       .catch((err) => console.error("Initial status error:", err));
 
+    // The backend emits from many places during a crawl. Re-rendering the whole
+    // app per event costs more than the indexer's own work, so apply at most
+    // one update per 250 ms; the latest payload always lands, so the final
+    // "idle" state is never dropped.
     let unlisten: (() => void) | undefined;
-    listen<IndexingStatus>("indexing-status", (event) => setIndexingStatus(event.payload))
+    let pending: IndexingStatus | null = null;
+    let timer: number | undefined;
+    let lastApplied = 0;
+    const apply = () => {
+      timer = undefined;
+      if (!pending) return;
+      setIndexingStatus(pending);
+      pending = null;
+      lastApplied = Date.now();
+    };
+    listen<IndexingStatus>("indexing-status", (event) => {
+      pending = event.payload;
+      const wait = 250 - (Date.now() - lastApplied);
+      if (wait <= 0) apply();
+      else if (timer === undefined) timer = window.setTimeout(apply, wait);
+    })
       .then((off) => {
         unlisten = off;
       })
       .catch((err) => console.error("Event listen error:", err));
 
     return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
       if (unlisten) unlisten();
     };
   }, [isSetupComplete]);
