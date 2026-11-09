@@ -11,6 +11,7 @@
     "openFile": "open selected file",
     "showFolder": "show in folder",
     "copyPath": "copy the selected path (unless text is selected)",
+    "selectMany": "select several results, then right-click to copy or move them",
     "details": "details for selected file",
     "settings": "settings",
     "thisSheet": "this sheet",

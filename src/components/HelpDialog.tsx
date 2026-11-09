@@ -11,6 +11,7 @@ const KEYS = [
   { combo: "Enter", key: "openFile" },
   { combo: "Shift+Enter", key: "showFolder" },
   { combo: "⌘/Ctrl+C", key: "copyPath" },
+  { combo: "⌘/Ctrl+Click · Shift+Click · ⌘/Ctrl+A", key: "selectMany" },
   { combo: "⌘/Ctrl+I", key: "details" },
   { combo: "⌘/Ctrl+Shift+L", key: "toggleView" },
   { combo: "⌘/Ctrl+,", key: "settings" },
