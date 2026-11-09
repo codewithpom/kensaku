@@ -23,7 +23,11 @@ pub fn extract_parquet(path: &Path, max_bytes: usize, head_rows: usize) -> Optio
     }
 
     let sampled = file_meta.num_rows() > head_rows as i64;
-    let mut out = String::from(if sampled { "columns (first rows sampled): " } else { "columns: " });
+    let mut out = String::from(if sampled {
+        "columns (first rows sampled): "
+    } else {
+        "columns: "
+    });
     for (index, field) in fields.iter().enumerate() {
         if index > 0 {
             out.push_str(", ");
@@ -95,11 +99,17 @@ mod tests {
             SerializedFileWriter::new(File::create(&path).unwrap(), schema, props).unwrap();
         let mut group = writer.next_row_group().unwrap();
         let mut column = group.next_column().unwrap().unwrap();
-        column.typed::<Int64Type>().write_batch(ids, None, None).unwrap();
+        column
+            .typed::<Int64Type>()
+            .write_batch(ids, None, None)
+            .unwrap();
         column.close().unwrap();
         let mut column = group.next_column().unwrap().unwrap();
         let names: Vec<ByteArray> = names.iter().map(|name| ByteArray::from(*name)).collect();
-        column.typed::<ByteArrayType>().write_batch(&names, None, None).unwrap();
+        column
+            .typed::<ByteArrayType>()
+            .write_batch(&names, None, None)
+            .unwrap();
         column.close().unwrap();
         group.close().unwrap();
         writer.close().unwrap();
@@ -130,7 +140,8 @@ mod tests {
 
     #[test]
     fn non_parquet_input_is_none() {
-        let path = std::env::temp_dir().join(format!("kensaku-notparquet-{}.parquet", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("kensaku-notparquet-{}.parquet", std::process::id()));
         std::fs::write(&path, b"plain text, not parquet").unwrap();
         assert_eq!(extract_parquet(&path, 1000, 10), None);
         let _ = std::fs::remove_file(&path);
