@@ -40,7 +40,7 @@ rayon = "1.10"
 lopdf = "0.47.0"
 quick-xml = "0.42.0"
 zip = "9.1.0"
-ureq = { version = "2", features = ["tls", "json"] }
+ureq = { version = "2", features = ["tls", "json", "native-certs"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 paddleocr_rs_onnx = { version = "0.2.8", default-features = false, optional = true }
 # `load-dynamic`: the prebuilt static onnxruntime archive is compiled

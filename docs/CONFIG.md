@@ -21,6 +21,18 @@ index, OCR state, everything else under the data directory):
    This is what makes the Windows portable build self-contained: copy the
    folder, keep your index.
 
+## HTTPS certificate trust
+
+Model, OCR, and update downloads use the operating system's trusted CA
+certificates, including corporate proxy CAs installed by your administrator.
+To supply a custom trust bundle, set `SSL_CERT_FILE` to a PEM certificate bundle
+or `SSL_CERT_DIR` to an OpenSSL-compatible certificate directory before starting
+Kensaku. If either variable is set, only the specified locations are used instead
+of the system store. Include all roots needed for your downloads in that bundle.
+Restart Kensaku after changing these variables. Certificate and hostname
+verification remain enabled; invalid or unreadable bundles do not disable TLS
+verification.
+
 ## Keys
 
 | Key | Type | Default | Meaning |
