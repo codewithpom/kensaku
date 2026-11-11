@@ -45,7 +45,6 @@
 //!
 use parking_lot::{Mutex, Condvar};
 use std::collections::VecDeque;
-use rayon::prelude::*;
 use log::{info, warn};
 
 mod det;#[cfg(feature = "ffi")] pub mod ffi;
@@ -205,7 +204,11 @@ pub fn shared_environment() -> ort::Result<ort::environment::Environment> {
 }
 
 fn session_builder() -> ort::Result<ort::session::builder::SessionBuilder> {
-    ort::session::Session::builder(&shared_environment()?)
+    // Kensaku owns concurrency in its extraction pool. A default ORT pool
+    // per detector/recognizer would multiply that budget by the core count.
+    Ok(ort::session::Session::builder(&shared_environment()?)?
+        .with_intra_threads(1)?
+        .with_inter_threads(1)?)
 }
 
 #[cfg(test)]
@@ -405,7 +408,7 @@ fn configure_session_builder(
 ///
 /// `OcrEngine` manages ONNX sessions for both the detection model (DBNet) and
 /// the recognition model (SVTR/CRNN). It maintains a pool of recognition sessions
-/// for concurrent inference across multiple detected text regions.
+/// for concurrent inference across documents in the caller's worker pool.
 ///
 /// # Thread Safety
 ///
@@ -577,7 +580,7 @@ impl OcrEngine {
             #[cfg(target_os = "ios")]
             { 1 }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            { (cores / 2).max(1) }
+            { (cores / 2).clamp(1, 8) }
         };
         info!("[ocr] creating rec session pool of size {} (cores={})", pool_size, cores);
 
@@ -777,7 +780,9 @@ impl OcrEngine {
         }
 
         let mut blocks: Vec<OcrBlock> = regions
-            .par_iter()
+            // Parallelize documents in Kensaku's bounded extraction pool, not
+            // regions on a second pool (including calls outside a Rayon pool).
+            .iter()
             .filter_map(|region| {
                 match self.recognize_text(image, region) {
                     Ok(decoded) => {

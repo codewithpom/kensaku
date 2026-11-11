@@ -1,7 +1,8 @@
-//! Best-effort background priority for the crawler.
+//! Best-effort background priority for crawler and extraction threads.
 //!
 //! Indexing must never fight typing. `balanced` and `eco` put the crawl thread
-//! into the OS idle/background class; `full` restores normal priority. Every
+//! and extraction workers into the OS idle/background class; `full` restores
+//! normal priority. Every
 //! syscall is advisory and failures are ignored, so unsupported sandboxes and
 //! permission-restricted environments still index correctly.
 //!
@@ -9,11 +10,29 @@
 //! profiling, and diagnosing slow crawls).
 
 use crate::config::CrawlMode;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static BACKGROUND: AtomicBool = AtomicBool::new(true);
+
+/// Update policy without changing the calling UI/command thread's priority.
+pub fn set_mode(mode: CrawlMode) {
+    BACKGROUND.store(mode.is_background(), Ordering::Relaxed);
+}
+
+/// Apply the current policy on an extraction worker, once per document.
+pub fn apply_current() {
+    let mode = if BACKGROUND.load(Ordering::Relaxed) {
+        CrawlMode::Balanced
+    } else {
+        CrawlMode::Full
+    };
+    apply(mode);
+}
 
 #[cfg(test)]
-static BACKGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+std::thread_local! {
+    static BACKGROUND_REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 pub fn apply(crawl_mode: CrawlMode) {
     if std::env::var_os("KENSAKU_NO_BG_PRIORITY").is_some() {
@@ -22,14 +41,14 @@ pub fn apply(crawl_mode: CrawlMode) {
     let background = crawl_mode.is_background();
     #[cfg(test)]
     if background {
-        BACKGROUND_REQUESTS.fetch_add(1, Ordering::SeqCst);
+        BACKGROUND_REQUESTS.set(BACKGROUND_REQUESTS.get() + 1);
     }
     apply_platform(background);
 }
 
 #[cfg(test)]
 pub fn background_requests() -> usize {
-    BACKGROUND_REQUESTS.load(Ordering::SeqCst)
+    BACKGROUND_REQUESTS.get()
 }
 
 #[cfg(target_os = "linux")]
@@ -63,27 +82,29 @@ fn apply_platform(background: bool) {
 fn apply_platform(background: bool) {
     let priority = if background { libc::PRIO_DARWIN_BG } else { 0 };
     unsafe {
-        let _ = libc::setpriority(libc::PRIO_DARWIN_PROCESS, 0, priority);
+        let _ = libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, priority);
     }
 }
 
 #[cfg(windows)]
 fn apply_platform(background: bool) {
-    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
-    const NORMAL_PRIORITY_CLASS: u32 = 0x0000_0020;
+    // Background mode affects only this worker, including I/O priority.
+    // Applying a process priority class also demotes the UI and webview.
+    const THREAD_MODE_BACKGROUND_BEGIN: i32 = 0x0001_0000;
+    const THREAD_MODE_BACKGROUND_END: i32 = 0x0002_0000;
 
     unsafe extern "system" {
-        fn GetCurrentProcess() -> *mut core::ffi::c_void;
-        fn SetPriorityClass(process: *mut core::ffi::c_void, class: u32) -> i32;
+        fn GetCurrentThread() -> *mut core::ffi::c_void;
+        fn SetThreadPriority(thread: *mut core::ffi::c_void, priority: i32) -> i32;
     }
 
-    let class = if background {
-        BELOW_NORMAL_PRIORITY_CLASS
+    let priority = if background {
+        THREAD_MODE_BACKGROUND_BEGIN
     } else {
-        NORMAL_PRIORITY_CLASS
+        THREAD_MODE_BACKGROUND_END
     };
     unsafe {
-        let _ = SetPriorityClass(GetCurrentProcess(), class);
+        let _ = SetThreadPriority(GetCurrentThread(), priority);
     }
 }
 
@@ -107,5 +128,24 @@ mod tests {
         let before = background_requests();
         apply(CrawlMode::Full);
         assert_eq!(background_requests(), before);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn worker_background_priority_leaves_process_priority_unchanged() {
+        use windows::Win32::System::Threading::{
+            GetCurrentProcess, GetCurrentThread, GetPriorityClass, GetThreadPriority,
+        };
+        std::thread::spawn(|| unsafe {
+            let process_priority = GetPriorityClass(GetCurrentProcess());
+            let thread_priority = GetThreadPriority(GetCurrentThread());
+            apply(CrawlMode::Balanced);
+            assert_eq!(GetPriorityClass(GetCurrentProcess()), process_priority);
+            apply(CrawlMode::Full);
+            assert_eq!(GetPriorityClass(GetCurrentProcess()), process_priority);
+            assert_eq!(GetThreadPriority(GetCurrentThread()), thread_priority);
+        })
+        .join()
+        .unwrap();
     }
 }

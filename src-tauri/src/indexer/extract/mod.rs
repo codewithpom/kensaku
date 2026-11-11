@@ -329,10 +329,15 @@ const SLOT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Number of concurrent extractions (and therefore concurrent OCR processes).
 fn extraction_concurrency() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .clamp(2, 8)
+    extraction_concurrency_for(
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
+    )
+}
+
+fn extraction_concurrency_for(cores: usize) -> usize {
+    // Each OCR session/child uses one CPU thread. Leave capacity for the UI,
+    // crawler and embedding worker; tiny machines must still make progress.
+    cores.saturating_sub(2).clamp(1, 8)
 }
 
 /// Bounded slot pool paired with the extraction thread pool.
@@ -402,10 +407,8 @@ static EXTRACTION_POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sy
 fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
     EXTRACTION_POOL
         .get_or_init(|| {
-            // Extraction (notably OCR) is the crawl bottleneck. Tesseract runs
-            // as a child process, so a few extra workers use the cores without
-            // pinning much memory. Capped at 8 to keep the number of concurrent
-            // OCR processes (and their RSS) bounded on a desktop.
+            // Share the slot budget with the workers, including timed-out
+            // extractions which continue running until they release their slot.
             match rayon::ThreadPoolBuilder::new()
                 .num_threads(extraction_concurrency())
                 .thread_name(|index| format!("kensaku-extract-{}", index))
@@ -559,6 +562,7 @@ fn extract_document_tracked(
             let worker_external = external.clone();
             let worker_retry = std::sync::Arc::clone(retry);
             pool.spawn(move || {
+                crate::util::priority::apply_current();
                 // Keep the slot alive for the real duration of the work, even
                 // if the caller stopped waiting.
                 let _slot = slot;
@@ -1023,5 +1027,23 @@ mod tests {
             result.is_none(),
             "an image must not produce content while OCR is disabled: {result:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::extraction_concurrency_for;
+
+    #[test]
+    fn extraction_reserves_cpu_capacity_without_starving_small_machines() {
+        for cores in 1usize..=256 {
+            let workers = extraction_concurrency_for(cores);
+            assert!((1..=8).contains(&workers));
+            assert!(workers <= cores.saturating_sub(2).max(1));
+        }
+        assert_eq!(extraction_concurrency_for(1), 1);
+        assert_eq!(extraction_concurrency_for(2), 1);
+        assert_eq!(extraction_concurrency_for(4), 2);
+        assert_eq!(extraction_concurrency_for(16), 8);
     }
 }

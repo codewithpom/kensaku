@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "src-tauri/src/ocr.rs"
+      - "src-tauri/vendor/paddleocr_rs_onnx/**"
       - "src-tauri/src/models.rs"
       - "src-tauri/src/indexer/extract/**"
       - "src-tauri/src/indexer/mod.rs"

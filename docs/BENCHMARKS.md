@@ -75,6 +75,42 @@ Report warm numbers for search latency and cold numbers for the walk.
    in-memory metadata footprint only; it excludes the path index, Tantivy, and
    SQLite.
 
+## OCR thread-budget benchmark (#170)
+
+`bench_ocr` measures actual PP-OCR extraction through the app's slot-limited
+worker pool. It requires the PP-OCRv6 tiny pack and the same ONNX Runtime used
+by `.github/workflows/ocr.yml`. It fails if the engine cannot initialize or any
+image remains pending. It does not write an index or change user configuration.
+
+```bash
+export KENSAKU_OCR_PACK_DIR=/path/to/ocr-pack
+export ORT_DYLIB_PATH=/path/to/libonnxruntime
+cargo run --manifest-path src-tauri/Cargo.toml --release --example bench_ocr -- src-tauri/tests/fixtures/ocr-ui-text
+```
+
+Compare identical fixture directories and runtime/model versions in separate
+processes at the base and PR commits. Report initialization separately from
+extraction time. Sample process thread count and CPU time during each process;
+thread totals include waiting callers and runtime overhead, not just runnable
+OCR work. The standard `bench` harness above remains the walk/search regression
+check; it does not exercise OCR.
+
+The extraction budget is `max(1, min(8, available_parallelism - 2))`. Each
+PaddleOCR session uses one intra-op and one inter-op thread, so inference runs
+on the extraction caller rather than a pool per session. Recognition regions
+run serially within a document; documents run concurrently. On machines with
+one or two available CPUs, one extraction worker is retained for progress.
+Background mode applies to crawler/extraction threads, leaving UI threads at
+their existing priority.
+
+Local correctness validation for #170 used Windows 10, four available CPUs,
+15.9 GiB RAM, ONNX Runtime 1.31.0 and the PP-OCRv6 tiny pack. All 104 UI-text
+fixture lines matched exactly; image and scanned-PDF pipeline tests passed.
+Release before/after measurements and the reported Linux corpus/keystroke
+latency check remain pending: the cold release build was stopped because it
+saturated the development machine. No throughput improvement is claimed from
+these correctness tests.
+
 ## 100k-file reference: Linux
 
 Measured on Linux (8 vCPU, local SSD), release build, warm page cache. This is

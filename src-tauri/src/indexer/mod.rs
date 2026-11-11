@@ -293,6 +293,7 @@ pub struct IndexerManager {
 
 impl IndexerManager {
     pub fn new(config: KensakuConfig) -> Self {
+        crate::util::priority::set_mode(config.crawl_mode);
         // Apply the opt-in external extractor registry before any crawl starts.
         crate::indexer::extract::set_external_extractors(config.extractors.clone());
         crate::indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
@@ -1998,7 +1999,7 @@ impl IndexerManager {
 
         config.save()?;
         *self.config.write() = config.clone();
-        crate::util::priority::apply(config.crawl_mode);
+        crate::util::priority::set_mode(config.crawl_mode);
         crate::indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
         crate::indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes, config.content_csv_head_rows);
         crate::embed::set_max_semantic_units(config.content_max_semantic_units);
