@@ -260,10 +260,13 @@ pub fn is_sensitive_path(path: &std::path::Path) -> bool {
 /// tree developers do; see [`crate::indexer::ignore`]. The walk itself still
 /// traverses ignored directories (the cheap default `excluded_dirs` list
 /// handles the heavy hitters); their entries are filtered before returning.
+/// `skip_hidden` controls dot-prefixed entries beneath each root; explicitly
+/// selected roots are still walked. Sensitive names remain excluded either way.
 pub fn walk_directories(
     dirs: &[PathBuf],
     excluded_dirs: &[String],
     include_ignored: bool,
+    skip_hidden: bool,
 ) -> Vec<FileEntry> {
     let mut result = Vec::new();
     let mut ignore_dirs: Vec<PathBuf> = Vec::new();
@@ -274,9 +277,8 @@ pub fn walk_directories(
             continue;
         }
 
-        // TODO: make hidden-file skipping configurable via `KensakuConfig::skip_hidden`.
         let walker = jwalk::WalkDir::new(root)
-            .skip_hidden(true)
+            .skip_hidden(skip_hidden)
             .process_read_dir({
                 let excluded_set = excluded_set.clone();
                 let prune_roots = prunes_for_roots(dirs);
@@ -289,9 +291,9 @@ pub fn walk_directories(
                                 return false;
                             }
                             let name = entry.file_name.to_string_lossy().to_lowercase();
-                            // Belt-and-suspenders: never descend into hidden entries
-                            // even if `skip_hidden` is unsupported on this platform.
-                            if name.starts_with('.') {
+                            // Belt-and-suspenders for platforms where jwalk's
+                            // hidden-entry filtering is unsupported.
+                            if skip_hidden && name.starts_with('.') {
                                 return false;
                             }
                             if excluded_set.contains(&name) {
@@ -398,6 +400,138 @@ pub fn walk_directories(
 mod tests {
     use super::*;
 
+    struct HiddenFixture(PathBuf);
+
+    impl HiddenFixture {
+        fn new() -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root =
+                std::env::temp_dir().join(format!("kensaku-hidden-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+
+        fn write(&self, relative: &str) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "searchable fixture").unwrap();
+        }
+
+        fn paths(&self, root: &std::path::Path, skip_hidden: bool) -> HashSet<PathBuf> {
+            walk_directories(&[root.to_path_buf()], &[], true, skip_hidden)
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect()
+        }
+    }
+
+    impl Drop for HiddenFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn hidden_entries_follow_skip_hidden_setting() {
+        let fixture = HiddenFixture::new();
+        for path in [
+            "visible.txt",
+            ".dotfile",
+            ".notes/note.txt",
+            ".notes/.nested/deep.txt",
+        ] {
+            fixture.write(path);
+        }
+        for skip_hidden in [true, false] {
+            let paths = fixture.paths(&fixture.0, skip_hidden);
+            assert!(paths.contains(&fixture.0.join("visible.txt")));
+            for path in [
+                ".dotfile",
+                ".notes",
+                ".notes/note.txt",
+                ".notes/.nested/deep.txt",
+            ] {
+                assert_eq!(
+                    paths.contains(&fixture.0.join(path)),
+                    !skip_hidden,
+                    "{path}, skip_hidden={skip_hidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicitly_watched_dot_directory_includes_hidden_descendants_when_enabled() {
+        let fixture = HiddenFixture::new();
+        fixture.write(".notes/plain.txt");
+        fixture.write(".notes/.nested/deep.txt");
+        let root = fixture.0.join(".notes");
+        let paths = fixture.paths(&root, false);
+        assert!(paths.contains(&root.join("plain.txt")));
+        assert!(paths.contains(&root.join(".nested/deep.txt")));
+    }
+
+    #[test]
+    fn hidden_indexing_keeps_sensitive_names_and_explicit_exclusions_pruned() {
+        let fixture = HiddenFixture::new();
+        for path in [
+            ".notes/keep.txt",
+            ".ssh/id_rsa",
+            ".env",
+            ".env.local",
+            ".excluded/drop.txt",
+        ] {
+            fixture.write(path);
+        }
+        for skip_hidden in [true, false] {
+            let entries = walk_directories(
+                std::slice::from_ref(&fixture.0),
+                &[".excluded".into()],
+                true,
+                skip_hidden,
+            );
+            assert_eq!(
+                entries
+                    .iter()
+                    .any(|e| e.path == fixture.0.join(".notes/keep.txt")),
+                !skip_hidden
+            );
+            assert!(!entries.iter().any(|entry| {
+                entry
+                    .path
+                    .strip_prefix(&fixture.0)
+                    .unwrap()
+                    .components()
+                    .any(|component| {
+                        let name = component.as_os_str().to_string_lossy();
+                        is_sensitive_name(&name) || name == ".excluded"
+                    })
+            }));
+        }
+    }
+
+    #[test]
+    fn hidden_indexing_still_honors_ignore_files() {
+        let fixture = HiddenFixture::new();
+        fixture.write(".notes/keep.txt");
+        fixture.write(".ignored/drop.txt");
+        std::fs::write(fixture.0.join(".gitignore"), ".ignored/\n").unwrap();
+        let entries = walk_directories(std::slice::from_ref(&fixture.0), &[], false, false);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.path == fixture.0.join(".notes/keep.txt"))
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.path.starts_with(fixture.0.join(".ignored")))
+        );
+    }
+
     #[test]
     fn extension_interning_is_stable_and_case_insensitive() {
         let upper = intern_extension(Some("PNG")).expect("interned");
@@ -484,7 +618,7 @@ mod tests {
         std::fs::create_dir_all(&docs).unwrap();
         std::fs::write(docs.join("notes.txt"), b"hello").unwrap();
 
-        let entries = walk_directories(std::slice::from_ref(&root), &[], false);
+        let entries = walk_directories(std::slice::from_ref(&root), &[], false, true);
         assert!(
             entries.iter().any(|e| e.path == root.join("Documents")),
             "ordinary directories must survive the prune"

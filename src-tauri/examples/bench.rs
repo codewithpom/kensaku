@@ -19,7 +19,7 @@ fn main() {
         "target".into(),
         "dist".into(),
     ];
-    let entries = walker::walk_directories(std::slice::from_ref(&root), &excluded, false);
+    let entries = walker::walk_directories(std::slice::from_ref(&root), &excluded, false, true);
     let walk_ms = t0.elapsed().as_secs_f64() * 1000.0;
     println!("\n--- Indexing ---");
     println!("Files walked: {}", entries.len());

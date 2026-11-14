@@ -660,7 +660,14 @@ impl IndexerManager {
             let ocr_signature_before = read_ocr_signature();
             let ocr_queued = Self::sync_ocr_state(&config_arc, &metadata);
 
-            let (watched_dirs, excluded_dirs, excluded_exts, crawl_mode, include_ignored) = {
+            let (
+                watched_dirs,
+                excluded_dirs,
+                excluded_exts,
+                crawl_mode,
+                include_ignored,
+                skip_hidden,
+            ) = {
                 let cfg = config_arc.read();
                 (
                     cfg.watched_dirs.clone(),
@@ -668,6 +675,7 @@ impl IndexerManager {
                     cfg.excluded_extensions.clone(),
                     cfg.crawl_mode,
                     cfg.include_ignored,
+                    cfg.skip_hidden,
                 )
             };
 
@@ -726,7 +734,8 @@ impl IndexerManager {
             }
 
             // Phase 1: Collect all entries (jwalk is already parallel internally).
-            let all_entries = walk_directories(&watched_dirs, &excluded_dirs, include_ignored);
+            let all_entries =
+                walk_directories(&watched_dirs, &excluded_dirs, include_ignored, skip_hidden);
             let total_entries = all_entries.len();
             if !quiet {
                 let mut st = status.write();

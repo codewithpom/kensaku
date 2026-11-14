@@ -34,7 +34,7 @@ fn main() {
     ];
 
     let t_walk = Instant::now();
-    let entries = walk_directories(std::slice::from_ref(&root), &excluded, false);
+    let entries = walk_directories(std::slice::from_ref(&root), &excluded, false, true);
     let walked = entries.len();
     let jobs: Vec<_> = entries
         .into_iter()

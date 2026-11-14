@@ -430,7 +430,12 @@ fn rescan_watched_dirs(
     metadata: &Arc<RwLock<MetadataStore>>,
     content_index: &Arc<RwLock<Option<ContentIndex>>>,
 ) -> usize {
-    let entries = walk_directories(watched_dirs, &cfg.excluded_dirs, cfg.include_ignored);
+    let entries = walk_directories(
+        watched_dirs,
+        &cfg.excluded_dirs,
+        cfg.include_ignored,
+        cfg.skip_hidden,
+    );
     let seen: HashSet<PathBuf> = entries
         .iter()
         .filter(|entry| !is_path_excluded(&entry.path, cfg))
@@ -518,8 +523,7 @@ fn is_path_excluded(path: &Path, cfg: &KensakuConfig) -> bool {
             .as_os_str()
             .to_str()
             .map(|name| {
-                // Hidden/dot entries are never indexed by default.
-                // TODO: honor `cfg.skip_hidden` once it is wired through.
+                // Match the crawler's hidden-entry setting.
                 cfg.skip_hidden && name.starts_with('.') || cfg.is_dir_excluded(name)
             })
             .unwrap_or(false)
@@ -674,6 +678,7 @@ fn handle_directory_rename(
     let excluded_dirs = cfg.excluded_dirs.clone();
     let excluded_extensions = cfg.excluded_extensions.clone();
     let include_ignored = cfg.include_ignored;
+    let skip_hidden = cfg.skip_hidden;
     let metadata = Arc::clone(metadata);
     let content_index = Arc::clone(content_index);
 
@@ -684,6 +689,7 @@ fn handle_directory_rename(
             std::slice::from_ref(&new_dir),
             &excluded_dirs,
             include_ignored,
+            skip_hidden,
         );
         let mut pending_commits = 0usize;
 
@@ -1249,6 +1255,70 @@ mod tests {
         );
         assert_eq!(queue.len(), 0);
         assert_eq!(metadata.read().len(), 0);
+    }
+
+    #[test]
+    fn hidden_entries_survive_rescan_until_skip_hidden_is_enabled() {
+        let root = temp_dir("hidden-rescan");
+        let data = temp_dir("hidden-rescan-store");
+        let hidden = root.join(".notes/note.txt");
+        let visible = root.join("visible.txt");
+        std::fs::create_dir_all(hidden.parent().unwrap()).unwrap();
+        std::fs::write(&hidden, "hidden note").unwrap();
+        std::fs::write(&visible, "visible note").unwrap();
+        let mut cfg = KensakuConfig {
+            watched_dirs: vec![root.clone()],
+            skip_hidden: false,
+            include_ignored: true,
+            ..KensakuConfig::default()
+        };
+        let metadata = store(&data);
+        let content_index = no_content();
+        rescan_watched_dirs(std::slice::from_ref(&root), &cfg, &metadata, &content_index);
+        assert!(metadata.read().get(&hidden).is_some());
+        assert!(metadata.read().get(&visible).is_some());
+        cfg.skip_hidden = true;
+        rescan_watched_dirs(std::slice::from_ref(&root), &cfg, &metadata, &content_index);
+        assert!(metadata.read().get(&hidden).is_none());
+        assert!(metadata.read().get(&visible).is_some());
+        drop(metadata);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(data).unwrap();
+    }
+
+    #[test]
+    fn hidden_descendants_are_discovered_during_directory_rename_repair() {
+        let root = temp_dir("hidden-rename");
+        let data = temp_dir("hidden-rename-store");
+        let old = root.join("old");
+        let new = root.join(".renamed");
+        std::fs::create_dir_all(old.join(".nested")).unwrap();
+        std::fs::write(old.join(".nested/payload.txt"), "fixture").unwrap();
+        let cfg = KensakuConfig {
+            watched_dirs: vec![root.clone()],
+            skip_hidden: false,
+            include_ignored: true,
+            ..KensakuConfig::default()
+        };
+        let metadata = store(&data);
+        let content_index = no_content();
+        // Only the old directory is known. Its hidden descendant must be
+        // discovered by the asynchronous repair walk, not a prefix rewrite.
+        handle_file_upsert(&old, &metadata, &content_index);
+        std::fs::rename(&old, &new).unwrap();
+        handle_directory_rename(&old, &new, &cfg, &metadata, &content_index);
+        let expected = new.join(".nested/payload.txt");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while metadata.read().get(&expected).is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            metadata.read().get(&expected).is_some(),
+            "repair lost hidden descendant"
+        );
+        assert!(metadata.read().get(&old).is_none());
+        // The worker owns cloned stores until it finishes; leave scratch
+        // cleanup to the OS rather than race its final transaction flush.
     }
 
     #[test]
