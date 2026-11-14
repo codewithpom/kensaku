@@ -809,18 +809,13 @@ pub fn agent_read_allowed(roots: &[String], excluded_extensions: &[String], path
         .rsplit_once('.')
         .map(|(_, ext)| ext)
         .unwrap_or_default();
-    if !extension.is_empty()
-        && (ALWAYS_DENIED_EXTENSIONS.contains(&extension)
+    extension.is_empty()
+        || !(ALWAYS_DENIED_EXTENSIONS.contains(&extension)
             || excluded_extensions.iter().any(|excluded| {
                 excluded
                     .trim_start_matches('.')
                     .eq_ignore_ascii_case(extension)
             }))
-    {
-        return false;
-    }
-
-    true
 }
 
 /// Composes a Kensaku query from a base query plus one or more scope paths.
